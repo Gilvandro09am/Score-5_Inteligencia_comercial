@@ -137,6 +137,45 @@ export function diasVisita(visita: string) {
     .filter(Boolean);
 }
 
+export const NOME_DIA: Record<string, string> = {
+  SEG: "Segunda-feira",
+  TER: "Terça-feira",
+  QUA: "Quarta-feira",
+  QUI: "Quinta-feira",
+  SEX: "Sexta-feira",
+  SAB: "Sábado",
+  DOM: "Domingo",
+};
+
+// Operações ficam na PB e na BA — ambos sem horário de verão, UTC-3.
+const FUSO = "America/Fortaleza";
+
+/** Dia da semana de hoje no formato do campo VISITA ("SEG", "TER", ...). */
+export function diaDeHoje(agora: Date) {
+  const curto = new Intl.DateTimeFormat("en-US", { weekday: "short", timeZone: FUSO }).format(agora);
+  const mapa: Record<string, string> = {
+    Mon: "SEG", Tue: "TER", Wed: "QUA", Thu: "QUI", Fri: "SEX", Sat: "SAB", Sun: "DOM",
+  };
+  return mapa[curto] ?? "SEG";
+}
+
+export function dataHora(agora: Date) {
+  return agora.toLocaleString("pt-BR", {
+    timeZone: FUSO,
+    dateStyle: "short",
+    timeStyle: "short",
+  });
+}
+
+/** AAAA-MM-DD no fuso local, para nome de arquivo. */
+export function dataISO(agora: Date) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: FUSO }).format(agora);
+}
+
+export function competenciaTexto(competencia: string | undefined) {
+  return competencia?.replace(/^(\d{4})(\d{2})$/, "$2/$1") ?? "—";
+}
+
 // ==================================================
 // INTELIGÊNCIA COMERCIAL
 // ==================================================
