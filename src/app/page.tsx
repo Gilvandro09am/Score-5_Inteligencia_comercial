@@ -1,597 +1,855 @@
+import Link from "next/link";
+import { Suspense } from "react";
+import {
+  acoesPorCesta,
+  carregarClientes,
+  comparaPrioridade,
+  DIAS_SEMANA,
+  diasVisita,
+  dinheiro,
+  menorGap,
+  numero,
+  opcoes,
+  percentual,
+  plural,
+  proximaAcao,
+  type AcaoCesta,
+  type Cliente,
+  type ProximaAcao,
+  type StatusMeta,
+} from "@/lib/score5";
 
-import fs from "node:fs/promises";
-import path from "node:path";
+// ==================================================
+// FILTROS (via querystring — funciona sem JavaScript no cliente)
+// ==================================================
 
-export const instant = false;
+const CHAVES_FILTRO = [
+  "operacao",
+  "gv",
+  "setor",
+  "visita",
+  "pdv",
+  "nome",
+  "situacao",
+  "ordem",
+] as const;
 
-type Produto = {
-  nome: string;
-  coluna: number;
-  realizado: number;
-  comprado: boolean;
+type Filtros = Record<(typeof CHAVES_FILTRO)[number], string>;
+
+const SITUACOES: Record<string, string> = {
+  pendente: "Com cesta pendente",
+  rapido: "Fecha cesta com 1 SKU",
+  faturamento: "Faturamento abaixo da meta",
+  fechado: "Tudo fechado",
 };
 
-type Cesta = {
-  id: string;
-  nome: string;
-  meta: number | null;
-  realizado: number;
-  faltam: number | null;
-  atingimento: number | null;
-  status: string;
-  produtos: Produto[];
-  oportunidades: string[];
-  oportunidadesOneWay: string[];
+const ORDENS: Record<string, string> = {
+  prioridade: "Prioridade comercial",
+  nome: "Nome fantasia (A–Z)",
+  skus: "Mais SKUs a vender",
+  faturamento: "Maior gap de faturamento",
 };
 
-type Cliente = {
-  chave: string;
-  competencia: string;
-  pdv: string;
-  nomeFantasia: string;
-  visita: string;
-  base: string;
-  operacao: string;
-  gv: string;
-  rn: string;
-  faturamento: {
-    meta: number | null;
-    realizado: number;
-    faltam: number | null;
-    atingimento: number | null;
-    status: string;
-  };
-  cestas: Cesta[];
-  cestasPendentes: number;
-  cestasConcluidas: number;
-};
-
-type Filtros = {
-  operacao?: string;
-  gv?: string;
-  rn?: string;
-  busca?: string;
-  pdv?: string;
-};
-
-function dinheiro(valor: number | null | undefined) {
-  if (valor === null || valor === undefined) return "Sem meta";
-
-  return valor.toLocaleString("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-  });
-}
-
-function numero(valor: number) {
-  return valor.toLocaleString("pt-BR");
-}
-
-function percentual(valor: number | null) {
-  return valor === null ? "—" : `${valor.toLocaleString("pt-BR")}%`;
-}
-
-function classeStatus(status: string) {
-  if (status === "CONCLUIDA") {
-    return "bg-emerald-100 text-emerald-800";
-  }
-
-  if (status === "PENDENTE") {
-    return "bg-amber-100 text-amber-800";
-  }
-
-  return "bg-slate-100 text-slate-500";
-}
-
-function nomeStatus(status: string) {
-  if (status === "CONCLUIDA") return "Concluída";
-  if (status === "PENDENTE") return "Pendente";
-  return "Sem meta";
-}
-
-function opcoes(valores: string[]) {
-  return [...new Set(valores)]
-    .filter(Boolean)
-    .sort((a, b) =>
-      a.localeCompare(b, "pt-BR", { numeric: true })
-    );
-}
-
-async function carregarClientes(): Promise<Cliente[]> {
-  const arquivo = path.join(
-    process.cwd(),
-    "dados",
-    "processados",
-    "clientes-score5.json"
-  );
-
-  const conteudo = await fs.readFile(arquivo, "utf8");
-
-  return JSON.parse(conteudo) as Cliente[];
-}
-
-function urlFiltros(filtros: Filtros, pdv?: string) {
+function urlCom(filtros: Filtros, extra: Record<string, string> = {}) {
   const params = new URLSearchParams();
-
-  if (filtros.operacao) params.set("operacao", filtros.operacao);
-  if (filtros.gv) params.set("gv", filtros.gv);
-  if (filtros.rn) params.set("rn", filtros.rn);
-  if (filtros.busca) params.set("busca", filtros.busca);
-  if (pdv) params.set("pdv", pdv);
-
-  return `/?${params.toString()}`;
+  for (const chave of CHAVES_FILTRO) {
+    if (filtros[chave]) params.set(chave, filtros[chave]);
+  }
+  for (const [k, v] of Object.entries(extra)) {
+    if (v) params.set(k, v);
+    else params.delete(k);
+  }
+  const qs = params.toString();
+  return qs ? `/?${qs}` : "/";
 }
 
-function Indicador({
-  titulo,
-  valor,
-  detalhe,
-}: {
-  titulo: string;
-  valor: string;
-  detalhe: string;
-}) {
+function aplicaSituacao(c: Cliente, situacao: string) {
+  switch (situacao) {
+    case "pendente":
+      return c.cestasPendentes > 0;
+    case "rapido":
+      return menorGap(c) === 1;
+    case "faturamento":
+      return c.faturamento.status === "PENDENTE";
+    case "fechado":
+      return (
+        c.cestasPendentes === 0 &&
+        c.faturamento.status !== "PENDENTE" &&
+        (c.cestasComMeta > 0 || c.faturamento.status === "CONCLUIDA")
+      );
+    default:
+      return true;
+  }
+}
+
+function ordenar(lista: Cliente[], ordem: string) {
+  const copia = [...lista];
+  switch (ordem) {
+    case "nome":
+      return copia.sort((a, b) =>
+        a.nomeFantasia.localeCompare(b.nomeFantasia, "pt-BR")
+      );
+    case "skus":
+      return copia.sort((a, b) => b.skusFaltantes - a.skusFaltantes);
+    case "faturamento":
+      return copia.sort(
+        (a, b) => (b.faturamento.faltam ?? 0) - (a.faturamento.faltam ?? 0)
+      );
+    default:
+      return copia.sort(comparaPrioridade);
+  }
+}
+
+// ==================================================
+// ESTILOS DE STATUS
+// ==================================================
+
+const ESTILO_STATUS: Record<StatusMeta, string> = {
+  CONCLUIDA: "bg-emerald-50 text-emerald-700 ring-emerald-600/20",
+  PENDENTE: "bg-amber-50 text-amber-800 ring-amber-600/20",
+  SEM_META: "bg-slate-50 text-slate-500 ring-slate-500/15",
+};
+
+const TEXTO_STATUS: Record<StatusMeta, string> = {
+  CONCLUIDA: "Fechada",
+  PENDENTE: "Pendente",
+  SEM_META: "Sem meta",
+};
+
+const ESTILO_ACAO: Record<ProximaAcao["tom"], string> = {
+  urgente: "bg-rose-50 text-rose-700 ring-rose-600/20",
+  atencao: "bg-amber-50 text-amber-800 ring-amber-600/20",
+  ok: "bg-emerald-50 text-emerald-700 ring-emerald-600/20",
+  neutro: "bg-slate-50 text-slate-500 ring-slate-500/15",
+};
+
+function Selo({ status }: { status: StatusMeta }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-      <p className="text-sm text-slate-500">{titulo}</p>
-      <p className="mt-2 text-3xl font-bold">{valor}</p>
-      <p className="mt-2 text-xs text-slate-500">{detalhe}</p>
+    <span
+      className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-semibold ring-1 ring-inset ${ESTILO_STATUS[status]}`}
+    >
+      {TEXTO_STATUS[status]}
+    </span>
+  );
+}
+
+function Barra({
+  valor,
+  status,
+}: {
+  valor: number | null;
+  status: StatusMeta;
+}) {
+  const largura = Math.max(0, Math.min(100, valor ?? 0));
+  const cor =
+    status === "CONCLUIDA"
+      ? "bg-emerald-500"
+      : status === "PENDENTE"
+        ? "bg-amber-500"
+        : "bg-slate-300";
+  return (
+    <div className="h-1.5 overflow-hidden rounded-full bg-slate-200">
+      <div className={`h-full rounded-full ${cor}`} style={{ width: `${largura}%` }} />
     </div>
   );
 }
 
-function Detalhamento({
-  cliente,
+// ==================================================
+// COMPONENTES
+// ==================================================
+
+function Kpi({
+  titulo,
+  valor,
+  detalhe,
+  destaque,
 }: {
-  cliente: Cliente;
+  titulo: string;
+  valor: string;
+  detalhe: string;
+  destaque?: "rose" | "amber" | "emerald";
+}) {
+  const borda =
+    destaque === "rose"
+      ? "border-l-rose-500"
+      : destaque === "amber"
+        ? "border-l-amber-500"
+        : destaque === "emerald"
+          ? "border-l-emerald-500"
+          : "border-l-slate-300";
+  return (
+    <div
+      className={`rounded-xl border border-slate-200 border-l-4 ${borda} bg-white px-4 py-3.5 shadow-sm`}
+    >
+      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+        {titulo}
+      </p>
+      <p className="mt-1.5 text-2xl font-bold tabular-nums text-slate-900">
+        {valor}
+      </p>
+      <p className="mt-0.5 text-xs text-slate-500">{detalhe}</p>
+    </div>
+  );
+}
+
+function CampoSelect({
+  nome,
+  rotulo,
+  valor,
+  itens,
+  todos = "Todos",
+}: {
+  nome: string;
+  rotulo: string;
+  valor: string;
+  itens: { valor: string; texto: string }[];
+  todos?: string;
 }) {
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-7">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">
-            Detalhamento do PDV
-          </p>
+    <label className="block text-sm">
+      <span className="mb-1 block text-xs font-medium text-slate-600">{rotulo}</span>
+      <select
+        name={nome}
+        defaultValue={valor}
+        className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+      >
+        <option value="">{todos}</option>
+        {itens.map((i) => (
+          <option key={i.valor} value={i.valor}>
+            {i.texto}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
 
-          <h2 className="mt-2 text-2xl font-bold">
-            {cliente.nomeFantasia}
-          </h2>
+function CampoTexto({
+  nome,
+  rotulo,
+  valor,
+  placeholder,
+  sugestoes,
+}: {
+  nome: string;
+  rotulo: string;
+  valor: string;
+  placeholder: string;
+  sugestoes: string[];
+}) {
+  const idLista = `lista-${nome}`;
+  return (
+    <label className="block text-sm">
+      <span className="mb-1 block text-xs font-medium text-slate-600">{rotulo}</span>
+      <input
+        name={nome}
+        defaultValue={valor}
+        placeholder={placeholder}
+        list={idLista}
+        autoComplete="off"
+        className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 shadow-sm placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+      />
+      <datalist id={idLista}>
+        {sugestoes.map((s) => (
+          <option key={s} value={s} />
+        ))}
+      </datalist>
+    </label>
+  );
+}
 
-          <p className="mt-2 text-sm text-slate-500">
-            {cliente.pdv} · {cliente.base} · Visita: {cliente.visita}
-          </p>
+/** Uma faixa horizontal por cesta: status → SKUs → ação do vendedor */
+function FaixaCesta({ acao }: { acao: AcaoCesta }) {
+  const { cesta, sugeridos } = acao;
+  const sugeridosCol = new Map(sugeridos.map((s) => [s.coluna, s]));
+  const semMeta = cesta.status === "SEM_META";
 
-          <p className="mt-1 text-sm text-slate-500">
-            GV {cliente.gv} · RN {cliente.rn}
-          </p>
+  const corAcao =
+    cesta.status === "PENDENTE"
+      ? "border-amber-200 bg-amber-50"
+      : cesta.status === "CONCLUIDA"
+        ? "border-emerald-200 bg-emerald-50"
+        : "border-slate-200 bg-slate-50";
+
+  const corTituloAcao =
+    cesta.status === "PENDENTE"
+      ? "text-amber-900"
+      : cesta.status === "CONCLUIDA"
+        ? "text-emerald-800"
+        : "text-slate-600";
+
+  return (
+    <div
+      className={`grid gap-4 border-t border-slate-100 p-4 first:border-t-0 lg:grid-cols-[220px_minmax(0,1fr)_300px] lg:items-center ${
+        semMeta ? "opacity-60" : ""
+      }`}
+    >
+      {/* 1. Cesta */}
+      <div>
+        <div className="flex items-center justify-between gap-2">
+          <h4 className="font-semibold text-slate-900">{cesta.nome}</h4>
+          <Selo status={cesta.status} />
         </div>
-
-        <span className="rounded-full bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700">
-          {cliente.cestasPendentes} cestas pendentes
-        </span>
-      </div>
-
-      <div className="mt-6 rounded-xl bg-slate-50 p-5">
-        <h3 className="font-bold">Faturamento cerveja</h3>
-
-        <div className="mt-4 grid gap-4 sm:grid-cols-3">
-          <div>
-            <p className="text-xs text-slate-500">Meta</p>
-            <p className="font-bold">{dinheiro(cliente.faturamento.meta)}</p>
-          </div>
-
-          <div>
-            <p className="text-xs text-slate-500">Realizado</p>
-            <p className="font-bold">
-              {dinheiro(cliente.faturamento.realizado)}
+        {!semMeta && (
+          <>
+            <p className="mt-1.5 text-sm tabular-nums text-slate-600">
+              <span className="font-semibold text-slate-900">{cesta.realizado}</span>
+              {" / "}
+              {cesta.meta} SKUs · {percentual(cesta.atingimento)}
             </p>
-          </div>
-
-          <div>
-            <p className="text-xs text-slate-500">Falta faturar</p>
-            <p className="font-bold">
-              {dinheiro(cliente.faturamento.faltam)}
-            </p>
-          </div>
-        </div>
-
-        {cliente.faturamento.meta !== null && (
-          <div className="mt-4">
-            <div className="mb-2 flex justify-between text-xs">
-              <span>Atingimento</span>
-              <strong>{percentual(cliente.faturamento.atingimento)}</strong>
+            <div className="mt-2">
+              <Barra valor={cesta.atingimento} status={cesta.status} />
             </div>
-            <div className="h-2 overflow-hidden rounded-full bg-slate-200">
-              <div
-                className="h-full rounded-full bg-blue-600"
-                style={{
-                  width: `${Math.min(100, Math.max(0, cliente.faturamento.atingimento ?? 0))}%`,
-                }}
-              />
-            </div>
-          </div>
+          </>
         )}
       </div>
 
-      <h3 className="mt-7 text-lg font-bold">Portfólio ideal</h3>
-
-      <div className="mt-4 grid gap-4 lg:grid-cols-2">
-        {cliente.cestas.map((cesta) => (
-          <div
-            key={cesta.id}
-            className="rounded-xl border border-slate-200 p-5"
-          >
-            <div className="flex items-center justify-between gap-2">
-              <h4 className="font-bold">{cesta.nome}</h4>
-
-              <span className={`rounded-full px-3 py-1 text-xs font-semibold ${classeStatus(cesta.status)}`}>
-                {nomeStatus(cesta.status)}
-              </span>
-            </div>
-
-            {cesta.meta === null ? (
-              <p className="mt-4 text-sm text-slate-500">
-                Este PDV não possui meta nesta cesta.
-              </p>
-            ) : (
-              <>
-                <div className="mt-4 flex items-end justify-between">
-                  <div>
-                    <p className="text-2xl font-bold">
-                      {cesta.realizado} / {cesta.meta}
-                    </p>
-                    <p className="text-xs text-slate-500">
-                      SKUs distintos
-                    </p>
-                  </div>
-                  <p className="text-sm font-semibold">
-                    Faltam {cesta.faltam ?? 0}
-                  </p>
-                </div>
-
-                <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200">
-                  <div
-                    className={`h-full rounded-full ${
-                      cesta.status === "CONCLUIDA"
-                        ? "bg-emerald-500"
-                        : "bg-amber-500"
-                    }`}
-                    style={{
-                      width: `${Math.min(100, Math.max(0, cesta.atingimento ?? 0))}%`,
-                    }}
-                  />
-                </div>
-
-                <p className="mt-2 text-right text-xs text-slate-500">
-                  {percentual(cesta.atingimento)}
-                </p>
-
-                <div className="mt-4 space-y-2 border-t border-slate-100 pt-4">
-                  {cesta.produtos.map((produto) => (
-                    <div
-                      key={produto.coluna}
-                      className="flex justify-between gap-3 text-sm"
-                    >
-                      <span className="text-slate-600">
-                        {produto.nome}
-                      </span>
-
-                      <span className={`font-semibold ${
-                        produto.realizado === 0
-                          ? "text-red-600"
-                          : "text-emerald-700"
-                      }`}>
-                        {produto.realizado}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-
-                {cesta.status === "PENDENTE" && (
-                  <div className="mt-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-950">
-                    <p className="font-bold">
-                      Oportunidades comerciais
-                    </p>
-
-                    {cesta.oportunidades.length > 0 && (
-                      <p className="mt-2">
-                        Não compradas: {cesta.oportunidades.join(", ")}
-                      </p>
-                    )}
-
-                    {cesta.oportunidadesOneWay.length > 0 && (
-                      <p className="mt-2">
-                        Categorias com apenas uma versão realizada:{" "}
-                        {cesta.oportunidadesOneWay.join(", ")}
-                      </p>
-                    )}
-
-                    <p className="mt-2 font-medium">
-                      Priorize a inclusão de {cesta.faltam}{" "}
-                      SKU(s) distinto(s).
-                    </p>
-                  </div>
+      {/* 2. SKUs em linha */}
+      <div className="min-w-0">
+        <div className="flex gap-1.5 overflow-x-auto pb-1 lg:flex-wrap lg:overflow-visible">
+          {cesta.produtos.map((p) => {
+            const sug = sugeridosCol.get(p.coluna);
+            const comprado = p.realizado > 0;
+            const estilo = sug
+              ? "border-amber-400 bg-amber-100 text-amber-900"
+              : comprado
+                ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                : "border-slate-200 bg-white text-slate-500";
+            return (
+              <span
+                key={p.coluna}
+                title={
+                  sug
+                    ? sug.alavanca > 1
+                      ? `Sugerido — conta para ${sug.alavanca} cestas pendentes`
+                      : "Sugerido para fechar a cesta"
+                    : comprado
+                      ? `Positivado (${p.realizado} versão(ões))`
+                      : "Não positivado"
+                }
+                className={`inline-flex flex-none items-center gap-1 whitespace-nowrap rounded-md border px-2 py-1 text-xs font-medium ${estilo}`}
+              >
+                <span aria-hidden>{comprado ? "✓" : sug ? "→" : "○"}</span>
+                {p.nome}
+                {p.realizado > 1 && (
+                  <span className="rounded bg-emerald-600/10 px-1 tabular-nums">
+                    ×{p.realizado}
+                  </span>
                 )}
-              </>
-            )}
+                {sug && sug.alavanca > 1 && (
+                  <span className="rounded bg-amber-600/15 px-1">{sug.alavanca} cestas</span>
+                )}
+              </span>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* 3. Ação do vendedor */}
+      <div className={`rounded-lg border px-3 py-2.5 ${corAcao}`}>
+        <p className={`text-xs font-bold uppercase tracking-wide ${corTituloAcao}`}>
+          {acao.titulo}
+        </p>
+        <p className="mt-1 text-sm leading-snug text-slate-700">{acao.detalhe}</p>
+      </div>
+    </div>
+  );
+}
+
+function PainelPdv({ cliente, urlFechar }: { cliente: Cliente; urlFechar: string }) {
+  const acoes = acoesPorCesta(cliente);
+  const fat = cliente.faturamento;
+  const pendentes = acoes
+    .filter((a) => a.cesta.status === "PENDENTE")
+    .sort((a, b) => (a.cesta.faltam ?? 0) - (b.cesta.faltam ?? 0));
+
+  // Roteiro: passos numerados na ordem em que o vendedor deve atacar
+  const roteiro: string[] = [];
+  for (const a of pendentes) {
+    const nomes = a.sugeridos
+      .map((s) => (s.tipo === "VERSAO" ? `+1 versão ${s.nome}` : s.nome))
+      .join(", ");
+    roteiro.push(
+      `Fechar ${a.cesta.nome}: positivar ${plural(a.cesta.faltam ?? 0, "SKU", "SKUs")} (${nomes}).`
+    );
+  }
+  if (fat.status === "PENDENTE") {
+    roteiro.push(
+      `Faturamento: faltam ${dinheiro(fat.faltam)} para a meta de ${dinheiro(fat.meta)} — ampliar volume dos itens de maior giro.`
+    );
+  }
+  const fechadas = acoes.filter((a) => a.cesta.status === "CONCLUIDA");
+  if (fechadas.length > 0) {
+    roteiro.push(
+      `Proteger ${fechadas.map((a) => a.cesta.nome).join(", ")}: garantir recompra dos SKUs já positivados.`
+    );
+  }
+
+  return (
+    <section
+      id="painel"
+      className="scroll-mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"
+    >
+      {/* Cabeçalho do PDV */}
+      <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 bg-slate-50/60 px-5 py-4">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold uppercase tracking-wider text-indigo-600">
+            Painel do PDV
+          </p>
+          <h2 className="mt-1 truncate text-xl font-bold text-slate-900">
+            {cliente.nomeFantasia}
+          </h2>
+          <dl className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-sm text-slate-600">
+            {[
+              ["PDV", cliente.pdv],
+              ["Base", cliente.base],
+              ["Visita", cliente.visita],
+              ["GV", cliente.gv],
+              ["Setor", cliente.rn],
+              ["Operação", cliente.operacao],
+            ].map(([k, v]) => (
+              <div key={k} className="flex gap-1">
+                <dt className="text-slate-400">{k}</dt>
+                <dd className="font-medium text-slate-700">{v}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+        <Link
+          href={urlFechar}
+          className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+        >
+          Fechar ✕
+        </Link>
+      </div>
+
+      {/* Números do PDV */}
+      <div className="grid grid-cols-2 divide-slate-100 border-b border-slate-200 md:grid-cols-4 md:divide-x">
+        {[
+          ["Meta faturamento", dinheiro(fat.meta)],
+          ["Realizado", dinheiro(fat.realizado)],
+          ["Falta faturar", fat.status === "PENDENTE" ? dinheiro(fat.faltam) : "—"],
+          ["Atingimento", percentual(fat.atingimento)],
+        ].map(([k, v]) => (
+          <div key={k} className="px-5 py-3">
+            <p className="text-xs text-slate-500">{k}</p>
+            <p className="mt-0.5 text-lg font-semibold tabular-nums text-slate-900">{v}</p>
           </div>
         ))}
+      </div>
+
+      {/* Roteiro de ação */}
+      <div className="border-b border-slate-200 px-5 py-4">
+        <h3 className="text-sm font-bold uppercase tracking-wide text-slate-900">
+          Roteiro de ação do vendedor
+        </h3>
+        {roteiro.length === 0 ? (
+          <p className="mt-2 text-sm text-slate-500">Nenhuma meta ativa para este PDV no ciclo.</p>
+        ) : (
+          <ol className="mt-3 space-y-2">
+            {roteiro.map((passo, i) => (
+              <li key={i} className="flex gap-3 text-sm text-slate-700">
+                <span className="flex h-5 w-5 flex-none items-center justify-center rounded-full bg-indigo-600 text-[11px] font-bold text-white">
+                  {i + 1}
+                </span>
+                <span className="leading-5">{passo}</span>
+              </li>
+            ))}
+          </ol>
+        )}
+      </div>
+
+      {/* Faixas por cesta */}
+      <div>
+        <div className="hidden grid-cols-[220px_minmax(0,1fr)_300px] gap-4 bg-slate-50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500 lg:grid">
+          <span>Cesta</span>
+          <span>SKUs da cesta</span>
+          <span>Ação do vendedor</span>
+        </div>
+        {acoes.map((a) => (
+          <FaixaCesta key={a.cesta.id} acao={a} />
+        ))}
+        <div className="flex flex-wrap gap-4 border-t border-slate-100 bg-slate-50 px-4 py-2.5 text-xs text-slate-500">
+          <span>
+            <span className="text-emerald-700">✓</span> Positivado (×n = versões)
+          </span>
+          <span>
+            <span className="text-amber-700">→</span> Ofertar nesta visita
+          </span>
+          <span>○ Não positivado</span>
+          <span>“2 cestas” = um único SKU avança duas cestas</span>
+        </div>
       </div>
     </section>
   );
 }
 
-export default async function Home({
-  searchParams,
-}: {
-  searchParams: Promise<Record<string, string | string[] | undefined>>;
-}) {
+// ==================================================
+// PÁGINA
+// ==================================================
+
+type SearchParams = Promise<Record<string, string | string[] | undefined>>;
+
+// Com cacheComponents ativo, a leitura de searchParams precisa ficar dentro
+// de um <Suspense> para não bloquear o pré-render da rota.
+export default function Home({ searchParams }: { searchParams: SearchParams }) {
+  return (
+    <Suspense
+      fallback={
+        <main className="flex min-h-screen items-center justify-center bg-slate-100 text-sm text-slate-500">
+          Carregando carteira…
+        </main>
+      }
+    >
+      <Painel searchParams={searchParams} />
+    </Suspense>
+  );
+}
+
+async function Painel({ searchParams }: { searchParams: SearchParams }) {
   const params = await searchParams;
-
-  const parametro = (nome: string) => {
-    const valor = params[nome];
-    return typeof valor === "string" ? valor : "";
+  const ler = (nome: string) => {
+    const v = params[nome];
+    return typeof v === "string" ? v.trim() : "";
   };
 
-  const filtros: Filtros = {
-    operacao: parametro("operacao"),
-    gv: parametro("gv"),
-    rn: parametro("rn"),
-    busca: parametro("busca"),
-    pdv: parametro("pdv"),
-  };
+  const filtros = Object.fromEntries(
+    CHAVES_FILTRO.map((k) => [k, ler(k)])
+  ) as Filtros;
+  const verPdv = ler("ver");
 
   const clientes = await carregarClientes();
 
+  // Filtros em cascata: Operação → GV → Setor
   const operacoes = opcoes(clientes.map((c) => c.operacao));
+  const porOperacao = clientes.filter(
+    (c) => !filtros.operacao || c.operacao === filtros.operacao
+  );
+  const gvs = opcoes(porOperacao.map((c) => c.gv));
+  const porGv = porOperacao.filter((c) => !filtros.gv || c.gv === filtros.gv);
+  const setores = opcoes(porGv.map((c) => c.rn));
+  const porSetor = porGv.filter((c) => !filtros.setor || c.rn === filtros.setor);
 
-  const clientesOperacao = clientes.filter((c) =>
-    !filtros.operacao || c.operacao === filtros.operacao
+  const diasDisponiveis = new Set(porSetor.flatMap((c) => diasVisita(c.visita)));
+  const dias = DIAS_SEMANA.filter((d) => diasDisponiveis.has(d));
+  if (porSetor.some((c) => c.visita === "Indefinido")) dias.push("Indefinido");
+
+  const termoPdv = filtros.pdv.toLocaleLowerCase("pt-BR");
+  const termoNome = filtros.nome.toLocaleLowerCase("pt-BR");
+
+  const filtrados = ordenar(
+    porSetor.filter((c) => {
+      const okVisita =
+        !filtros.visita ||
+        (filtros.visita === "Indefinido"
+          ? c.visita === "Indefinido"
+          : diasVisita(c.visita).includes(filtros.visita));
+      const okPdv = !termoPdv || c.pdv.toLocaleLowerCase("pt-BR").includes(termoPdv);
+      const okNome =
+        !termoNome || c.nomeFantasia.toLocaleLowerCase("pt-BR").includes(termoNome);
+      return okVisita && okPdv && okNome && aplicaSituacao(c, filtros.situacao);
+    }),
+    filtros.ordem
   );
 
-  const gvs = opcoes(clientesOperacao.map((c) => c.gv));
+  const selecionado = verPdv ? clientes.find((c) => c.pdv === verPdv) : undefined;
 
-  const clientesGV = clientesOperacao.filter((c) =>
-    !filtros.gv || c.gv === filtros.gv
+  // Indicadores da carteira filtrada
+  const totalCestasMeta = filtrados.reduce((t, c) => t + c.cestasComMeta, 0);
+  const totalCestasFechadas = filtrados.reduce((t, c) => t + c.cestasConcluidas, 0);
+  const totalSkus = filtrados.reduce((t, c) => t + c.skusFaltantes, 0);
+  const fechamentoRapido = filtrados.filter((c) => menorGap(c) === 1).length;
+  const gapFaturamento = filtrados.reduce(
+    (t, c) => t + (c.faturamento.status === "PENDENTE" ? c.faturamento.faltam ?? 0 : 0),
+    0
   );
+  const pdvsFatPendente = filtrados.filter((c) => c.faturamento.status === "PENDENTE").length;
 
-  const rns = opcoes(clientesGV.map((c) => c.rn));
-
-  const busca = (filtros.busca ?? "").toLocaleLowerCase("pt-BR");
-
-  const filtrados = clientesGV.filter((c) =>
-    (!filtros.rn || c.rn === filtros.rn) &&
-    (
-      !busca ||
-      c.nomeFantasia.toLocaleLowerCase("pt-BR").includes(busca) ||
-      c.pdv.toLocaleLowerCase("pt-BR").includes(busca)
-    )
-  );
-
-  const selecionado = filtrados.find((c) => c.pdv === filtros.pdv);
-
-  const comPendencia = filtrados.filter(
-    (c) => c.cestasPendentes > 0
-  ).length;
-
-  const concluidos = filtrados.filter(
-    (c) =>
-      c.cestasPendentes === 0 &&
-      c.cestas.some((cesta) => cesta.meta !== null)
-  ).length;
-
-  const pendentesFaturamento = filtrados.filter(
-    (c) => c.faturamento.status === "PENDENTE"
-  ).length;
+  const filtrosAtivos = CHAVES_FILTRO.filter((k) => k !== "ordem" && filtros[k]).length;
 
   return (
     <main className="min-h-screen bg-slate-100 text-slate-900">
-      <header className="bg-slate-950 px-5 py-5 text-white">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-extrabold tracking-wide">
-              SCORE 5
-            </h1>
-            <p className="text-sm text-slate-300">
-              Inteligência Comercial
-            </p>
+      <header className="border-b border-slate-800 bg-slate-950 text-white">
+        <div className="mx-auto flex max-w-[1400px] flex-wrap items-center justify-between gap-4 px-4 py-4 md:px-6">
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-600 text-sm font-black">
+              S5
+            </div>
+            <div>
+              <h1 className="text-lg font-bold leading-tight tracking-wide">SCORE 5</h1>
+              <p className="text-xs text-slate-400">Inteligência Comercial</p>
+            </div>
           </div>
-
-          <div className="rounded-lg bg-slate-800 px-4 py-2 text-sm">
-            Competência: {clientes[0]?.competencia ?? "—"}
+          <div className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-300">
+            Competência{" "}
+            <span className="font-semibold text-white">
+              {clientes[0]?.competencia.replace(/^(\d{4})(\d{2})$/, "$2/$1") ?? "—"}
+            </span>
           </div>
         </div>
       </header>
 
-      <div className="mx-auto max-w-7xl space-y-6 p-4 md:p-7">
-        <div>
-          <h2 className="text-2xl font-bold md:text-3xl">
-            Acompanhamento dos PDVs
-          </h2>
-          <p className="mt-2 text-sm text-slate-500">
-            Faturamento, portfólio ideal e oportunidades comerciais.
-          </p>
-        </div>
-
-        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h3 className="mb-4 font-bold">Filtros comerciais</h3>
-
-          <form method="GET" className="grid gap-3 md:grid-cols-5">
-            <label className="text-sm">
-              <span className="mb-1 block text-slate-600">Operação</span>
-              <select
-                name="operacao"
-                defaultValue={filtros.operacao}
-                className="w-full rounded-lg border border-slate-300 bg-white p-3"
-              >
-                <option value="">Todas</option>
-                {operacoes.map((o) => (
-                  <option key={o} value={o}>{o}</option>
-                ))}
-              </select>
-            </label>
-
-            <label className="text-sm">
-              <span className="mb-1 block text-slate-600">GV</span>
-              <select
-                name="gv"
-                defaultValue={filtros.gv}
-                className="w-full rounded-lg border border-slate-300 bg-white p-3"
-              >
-                <option value="">Todos</option>
-                {gvs.map((gv) => (
-                  <option key={gv} value={gv}>{gv}</option>
-                ))}
-              </select>
-            </label>
-
-            <label className="text-sm">
-              <span className="mb-1 block text-slate-600">RN</span>
-              <select
-                name="rn"
-                defaultValue={filtros.rn}
-                className="w-full rounded-lg border border-slate-300 bg-white p-3"
-              >
-                <option value="">Todas</option>
-                {rns.map((rn) => (
-                  <option key={rn} value={rn}>{rn}</option>
-                ))}
-              </select>
-            </label>
-
-            <label className="text-sm">
-              <span className="mb-1 block text-slate-600">
-                Nome Fantasia / PDV
+      <div className="mx-auto max-w-[1400px] space-y-5 px-4 py-6 md:px-6">
+        {/* Filtros */}
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:p-5">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-sm font-bold uppercase tracking-wide text-slate-900">
+              Filtros da carteira
+            </h2>
+            {filtrosAtivos > 0 && (
+              <span className="rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-semibold text-indigo-700">
+                {plural(filtrosAtivos, "filtro ativo", "filtros ativos")}
               </span>
-              <input
-                name="busca"
-                defaultValue={filtros.busca}
-                placeholder="Pesquisar cliente..."
-                className="w-full rounded-lg border border-slate-300 p-3"
-              />
-            </label>
+            )}
+          </div>
 
-            <div className="flex items-end gap-2">
+          <form method="GET" className="space-y-3">
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
+              <CampoSelect
+                nome="operacao"
+                rotulo="Operação"
+                valor={filtros.operacao}
+                todos="Todas"
+                itens={operacoes.map((o) => ({ valor: o, texto: o.replace(/^Pau Brasil /, "") }))}
+              />
+              <CampoSelect
+                nome="gv"
+                rotulo="GV"
+                valor={filtros.gv}
+                itens={gvs.map((g) => ({ valor: g, texto: g === "-1" ? "Sem GV" : `GV ${g}` }))}
+              />
+              <CampoSelect
+                nome="setor"
+                rotulo="Setor"
+                valor={filtros.setor}
+                itens={setores.map((s) => ({ valor: s, texto: s === "-1" ? "Sem setor" : s }))}
+              />
+              <CampoSelect
+                nome="visita"
+                rotulo="Dia de visita"
+                valor={filtros.visita}
+                itens={dias.map((d) => ({ valor: d, texto: d }))}
+              />
+              <CampoTexto
+                nome="pdv"
+                rotulo="PDV"
+                valor={filtros.pdv}
+                placeholder="Código do PDV"
+                sugestoes={porSetor.map((c) => c.pdv).slice(0, 500)}
+              />
+              <div className="col-span-2 md:col-span-1 xl:col-span-1">
+                <CampoTexto
+                  nome="nome"
+                  rotulo="Nome fantasia"
+                  valor={filtros.nome}
+                  placeholder="Buscar cliente"
+                  sugestoes={opcoes(porSetor.map((c) => c.nomeFantasia)).slice(0, 500)}
+                />
+              </div>
+              <CampoSelect
+                nome="situacao"
+                rotulo="Situação"
+                valor={filtros.situacao}
+                todos="Todas"
+                itens={Object.entries(SITUACOES).map(([valor, texto]) => ({ valor, texto }))}
+              />
+              <label className="block text-sm">
+                <span className="mb-1 block text-xs font-medium text-slate-600">Ordenar por</span>
+                <select
+                  name="ordem"
+                  defaultValue={filtros.ordem || "prioridade"}
+                  className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                >
+                  {Object.entries(ORDENS).map(([valor, texto]) => (
+                    <option key={valor} value={valor}>
+                      {texto}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 type="submit"
-                className="rounded-lg bg-blue-600 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-700"
+                className="h-10 rounded-lg bg-indigo-600 px-5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700"
               >
-                Filtrar
+                Aplicar filtros
               </button>
-
-              <a
+              <Link
                 href="/"
-                className="rounded-lg border border-slate-300 px-4 py-3 text-sm"
+                className="flex h-10 items-center rounded-lg border border-slate-300 bg-white px-4 text-sm font-medium text-slate-700 hover:bg-slate-50"
               >
                 Limpar
-              </a>
+              </Link>
+              <p className="ml-auto text-xs text-slate-500">
+                Operação, GV e Setor são em cascata — aplique para atualizar as opções.
+              </p>
             </div>
           </form>
         </section>
 
-        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <Indicador
-            titulo="PDVs encontrados"
-            valor={numero(filtrados.length)}
-            detalhe="Clientes após aplicação dos filtros"
+        {/* Indicadores */}
+        <section className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+          <Kpi titulo="PDVs na carteira" valor={numero(filtrados.length)} detalhe="Após filtros" />
+          <Kpi
+            titulo="Fecha com 1 SKU"
+            valor={numero(fechamentoRapido)}
+            detalhe="PDVs a um SKU de fechar cesta"
+            destaque="rose"
           />
-          <Indicador
-            titulo="Portfólio pendente"
-            valor={numero(comPendencia)}
-            detalhe="PDVs com alguma cesta pendente"
+          <Kpi
+            titulo="SKUs a positivar"
+            valor={numero(totalSkus)}
+            detalhe="Soma dos gaps de cesta"
+            destaque="amber"
           />
-          <Indicador
-            titulo="Portfólio sem pendências"
-            valor={numero(concluidos)}
-            detalhe="PDVs com todas as cestas aplicáveis concluídas"
+          <Kpi
+            titulo="Cestas fechadas"
+            valor={totalCestasMeta ? percentual(Math.round((totalCestasFechadas / totalCestasMeta) * 1000) / 10) : "—"}
+            detalhe={`${numero(totalCestasFechadas)} de ${numero(totalCestasMeta)} com meta`}
+            destaque="emerald"
           />
-          <Indicador
-            titulo="Faturamento pendente"
-            valor={numero(pendentesFaturamento)}
-            detalhe="PDVs abaixo da meta de faturamento"
+          <Kpi
+            titulo="Gap de faturamento"
+            valor={dinheiro(gapFaturamento)}
+            detalhe={`${plural(pdvsFatPendente, "PDV abaixo", "PDVs abaixo")} da meta`}
+            destaque="amber"
+          />
+          <Kpi
+            titulo="Fat. abaixo da meta"
+            valor={numero(pdvsFatPendente)}
+            detalhe={
+              filtrados.length
+                ? `${percentual(Math.round((pdvsFatPendente / filtrados.length) * 1000) / 10)} da carteira`
+                : "—"
+            }
           />
         </section>
 
+        {/* Painel do PDV selecionado (acima da lista para não precisar rolar) */}
+        {selecionado && (
+          <PainelPdv cliente={selecionado} urlFechar={urlCom(filtros)} />
+        )}
+
+        {/* Lista de PDVs */}
         <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="p-5">
-            <h3 className="text-lg font-bold">Clientes Score 5</h3>
-            <p className="mt-1 text-sm text-slate-500">
-              Clique em um PDV para visualizar o detalhamento.
-            </p>
+          <div className="flex flex-wrap items-end justify-between gap-2 border-b border-slate-200 px-5 py-4">
+            <div>
+              <h2 className="text-sm font-bold uppercase tracking-wide text-slate-900">
+                Carteira de PDVs
+              </h2>
+              <p className="mt-0.5 text-xs text-slate-500">
+                Ordenado por {ORDENS[filtros.ordem] ?? ORDENS.prioridade}. Clique no cliente para abrir o painel de ação.
+              </p>
+            </div>
           </div>
 
-          <div className="max-h-[650px] overflow-auto">
-            <table className="w-full min-w-[900px] text-left text-sm">
-              <thead className="sticky top-0 bg-slate-100 text-slate-600">
+          <div className="max-h-[640px] overflow-auto">
+            <table className="w-full min-w-[1080px] text-left text-sm">
+              <thead className="sticky top-0 z-10 bg-slate-50 text-xs uppercase tracking-wide text-slate-500 shadow-[0_1px_0_0_rgb(226_232_240)]">
                 <tr>
-                  <th className="p-4">Nome Fantasia</th>
-                  <th className="p-4">Visita</th>
-                  <th className="p-4">GV</th>
-                  <th className="p-4">RN</th>
-                  <th className="p-4">Faturamento</th>
-                  <th className="p-4">Cestas pendentes</th>
-                  <th className="p-4">Detalhes</th>
+                  <th className="px-4 py-2.5 font-semibold">Cliente</th>
+                  <th className="px-4 py-2.5 font-semibold">Visita</th>
+                  <th className="px-4 py-2.5 font-semibold">GV / Setor</th>
+                  <th className="px-4 py-2.5 font-semibold">Faturamento</th>
+                  <th className="px-4 py-2.5 font-semibold">Cestas</th>
+                  <th className="px-4 py-2.5 text-right font-semibold">SKUs a vender</th>
+                  <th className="px-4 py-2.5 font-semibold">Próxima ação</th>
                 </tr>
               </thead>
-
-              <tbody>
-                {filtrados.map((cliente) => (
-                  <tr key={cliente.chave} className="border-t border-slate-100 hover:bg-slate-50">
-                    <td className="p-4">
-                      <p className="font-semibold">{cliente.nomeFantasia}</p>
-                      <p className="text-xs text-slate-500">{cliente.pdv}</p>
-                    </td>
-
-                    <td className="p-4">{cliente.visita}</td>
-                    <td className="p-4">{cliente.gv}</td>
-                    <td className="p-4">{cliente.rn}</td>
-
-                    <td className="p-4">
-                      <span className={`rounded-full px-3 py-1 text-xs font-semibold ${classeStatus(cliente.faturamento.status)}`}>
-                        {percentual(cliente.faturamento.atingimento)}
-                      </span>
-                    </td>
-
-                    <td className="p-4">
-                      <span className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                        cliente.cestasPendentes > 0
-                          ? "bg-amber-100 text-amber-800"
-                          : "bg-emerald-100 text-emerald-800"
-                      }`}>
-                        {cliente.cestasPendentes}
-                      </span>
-                    </td>
-
-                    <td className="p-4">
-                      <a
-                        href={urlFiltros(filtros, cliente.pdv)}
-                        className="font-semibold text-blue-700 hover:underline"
-                      >
-                        Ver PDV
-                      </a>
-                    </td>
-                  </tr>
-                ))}
+              <tbody className="divide-y divide-slate-100">
+                {filtrados.map((c) => {
+                  const acao = proximaAcao(c);
+                  const ativo = selecionado?.pdv === c.pdv;
+                  const href = `${urlCom(filtros, { ver: c.pdv })}#painel`;
+                  return (
+                    <tr
+                      key={c.chave}
+                      className={ativo ? "bg-indigo-50/70" : "hover:bg-slate-50"}
+                    >
+                      <td className="px-4 py-2.5">
+                        <Link href={href} className="group block">
+                          <p className="font-semibold text-slate-900 group-hover:text-indigo-700 group-hover:underline">
+                            {c.nomeFantasia}
+                          </p>
+                          <p className="text-xs text-slate-500">
+                            {c.pdv} · {c.base}
+                          </p>
+                        </Link>
+                      </td>
+                      <td className="px-4 py-2.5 text-slate-600">{c.visita.replace(/\/$/, "")}</td>
+                      <td className="px-4 py-2.5 tabular-nums text-slate-600">
+                        {c.gv} / {c.rn}
+                      </td>
+                      <td className="w-40 px-4 py-2.5">
+                        {c.faturamento.status === "SEM_META" ? (
+                          <span className="text-xs text-slate-400">Sem meta</span>
+                        ) : (
+                          <div>
+                            <div className="flex justify-between text-xs tabular-nums">
+                              <span className="font-semibold text-slate-800">
+                                {percentual(c.faturamento.atingimento)}
+                              </span>
+                              {c.faturamento.status === "PENDENTE" && (
+                                <span className="text-slate-500">−{dinheiro(c.faturamento.faltam)}</span>
+                              )}
+                            </div>
+                            <div className="mt-1">
+                              <Barra valor={c.faturamento.atingimento} status={c.faturamento.status} />
+                            </div>
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <div className="flex gap-1">
+                          {c.cestas.map((cesta) => (
+                            <span
+                              key={cesta.id}
+                              title={`${cesta.nome}: ${TEXTO_STATUS[cesta.status]}${
+                                cesta.status === "PENDENTE" ? ` (faltam ${cesta.faltam})` : ""
+                              }`}
+                              className={`h-2.5 w-6 rounded-sm ${
+                                cesta.status === "CONCLUIDA"
+                                  ? "bg-emerald-500"
+                                  : cesta.status === "PENDENTE"
+                                    ? "bg-amber-400"
+                                    : "bg-slate-200"
+                              }`}
+                            />
+                          ))}
+                        </div>
+                        <p className="mt-1 text-xs tabular-nums text-slate-500">
+                          {c.cestasConcluidas}/{c.cestasComMeta} fechadas
+                        </p>
+                      </td>
+                      <td className="px-4 py-2.5 text-right font-semibold tabular-nums">
+                        {c.skusFaltantes || <span className="text-slate-300">0</span>}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <Link
+                          href={href}
+                          className={`inline-flex items-center rounded-md px-2 py-1 text-xs font-semibold ring-1 ring-inset hover:brightness-95 ${ESTILO_ACAO[acao.tom]}`}
+                        >
+                          {acao.texto}
+                        </Link>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
 
             {filtrados.length === 0 && (
-              <p className="p-8 text-center text-slate-500">
+              <p className="p-10 text-center text-sm text-slate-500">
                 Nenhum PDV encontrado para os filtros selecionados.
               </p>
             )}
           </div>
         </section>
 
-        {selecionado && (
-          <div id="detalhamento">
-            <Detalhamento cliente={selecionado} />
-          </div>
-        )}
-
-        <p className="pb-5 text-center text-xs text-slate-500">
-          Score 5 — Ambiente local de desenvolvimento.
-          Dados comerciais privados.
+        <p className="pb-2 text-center text-xs text-slate-400">
+          Score 5 · Inteligência Comercial — dados comerciais de uso interno.
         </p>
       </div>
     </main>
