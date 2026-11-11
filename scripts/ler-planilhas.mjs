@@ -4,6 +4,7 @@ import { XMLParser } from "fast-xml-parser";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { carregarEstoques, estoqueDaCategoria } from "./estoque.mjs";
 
 const raiz = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -86,26 +87,43 @@ async function lerExcel(nomeArquivo) {
   const documento = parser.parse(await aba.async("string"));
   const linhas = lista(documento.worksheet?.sheetData?.row);
 
+  // Converte a referência da célula ("AB12") no índice da coluna (base 0).
+  // Necessário porque o Excel omite células vazias em algumas planilhas.
+  function indiceColuna(referencia) {
+    const letras = String(referencia ?? "").match(/^[A-Z]+/)?.[0];
+    if (!letras) return null;
+    let n = 0;
+    for (const letra of letras) n = n * 26 + (letra.charCodeAt(0) - 64);
+    return n - 1;
+  }
+
+  function valorCelula(celula) {
+    const tipo = celula["@_t"];
+
+    if (tipo === "inlineStr") {
+      if (celula.is?.t !== undefined) {
+        return texto(celula.is.t);
+      }
+
+      return lista(celula.is?.r)
+        .map((parte) => texto(parte.t))
+        .join("");
+    }
+
+    if (tipo === "s") {
+      return strings[Number(celula.v)] ?? "";
+    }
+
+    return texto(celula.v);
+  }
+
   function extrair(linha) {
-    return lista(linha.c).map((celula) => {
-      const tipo = celula["@_t"];
-
-      if (tipo === "inlineStr") {
-        if (celula.is?.t !== undefined) {
-          return texto(celula.is.t);
-        }
-
-        return lista(celula.is?.r)
-          .map((parte) => texto(parte.t))
-          .join("");
-      }
-
-      if (tipo === "s") {
-        return strings[Number(celula.v)] ?? "";
-      }
-
-      return texto(celula.v);
-    });
+    const valores = [];
+    for (const celula of lista(linha.c)) {
+      const indice = indiceColuna(celula["@_r"]) ?? valores.length;
+      valores[indice] = valorCelula(celula);
+    }
+    return Array.from(valores, (v) => v ?? "");
   }
 
   if (!linhas.length) {
@@ -172,7 +190,12 @@ async function lerExcel(nomeArquivo) {
 
 // ==================================================
 // 2. CONFIGURAÇÃO DAS CESTAS
-// Posições das colunas começam em 1.
+// As colunas são localizadas pelo NOME do cabeçalho, não pela posição.
+// Em nov/2026 a coluna vazia "STL PG 600" (meta) saiu do relatório e
+// todas as posições mudaram — por isso não usamos mais números fixos.
+//
+// "bloco" indica em qual trecho da planilha procurar o produto, pois
+// alguns nomes se repetem (ex.: "BUD 600" existe no High End e no Core).
 // ==================================================
 
 const CESTAS = {
@@ -180,20 +203,23 @@ const CESTAS = {
     {
       id: "he600",
       nome: "High End 600",
-      metaColuna: 12,
-      produtos: [21, 22, 23, 24, 25, 26, 27],
+      meta: "600",
+      bloco: "HIGH_END",
+      produtos: ["SPT 600", "STL 600", "STL PG 600", "BUD 600", "COR 600", "ORI 600", "OUTROS 600"],
     },
     {
       id: "heLN",
       nome: "High End LN",
-      metaColuna: 14,
-      produtos: [28, 29, 30, 31, 32, 33, 36, 37],
+      meta: "LN",
+      bloco: "HIGH_END",
+      produtos: ["COR LN", "STL LN", "STL PG LN", "SPT LN", "MIC LN", "OUTROS LN", "COR LN ZERO", "OUTROS LN ZERO"],
     },
     {
       id: "heLNZero",
       nome: "High End LN Zero",
-      metaColuna: 15,
-      produtos: [36, 37],
+      meta: "LN ZERO",
+      bloco: "HIGH_END",
+      produtos: ["COR LN ZERO", "OUTROS LN ZERO"],
     },
   ],
 
@@ -201,89 +227,79 @@ const CESTAS = {
     {
       id: "core600",
       nome: "Core 600",
-      metaColuna: 17,
-      produtos: [38, 39, 40, 41, 42, 43, 44, 45, 46],
+      meta: "INTEIRA",
+      bloco: "CORE",
+      produtos: ["AP 600", "BC 600", "BUD 600", "ORI 600", "SK 600", "SPT 600", "STL 600", "STL PG 600", "OUTROS 600"],
     },
     {
       id: "coreRGB",
       nome: "Core RGB",
-      metaColuna: 19,
-      produtos: Array.from(
-        { length: 21 },
-        (_, i) => 38 + i
-      ),
+      meta: "RGB",
+      bloco: "CORE",
+      produtos: [
+        "AP 600", "BC 600", "BUD 600", "ORI 600", "SK 600", "SPT 600", "STL 600", "STL PG 600", "OUTROS 600",
+        "AP 300", "BC 300", "BUD 300", "ORI 300", "SK 300", "OUTROS 300",
+        "AP 1000", "BC 1000", "BUD 1000", "ORI 1000", "SK 1000", "OUTROS 1000",
+      ],
     },
   ],
 };
 
-// Validação para evitar que alterações na
-// estrutura dos relatórios gerem cálculos incorretos.
-const COLUNAS_ESPERADAS = {
-  12: "600",
-  14: "LN",
-  15: "LN ZERO",
-  17: "INTEIRA",
-  19: "RGB",
-  21: "SPT 600",
-  22: "STL 600",
-  23: "STL PG 600",
-  24: "BUD 600",
-  25: "COR 600",
-  26: "ORI 600",
-  27: "OUTROS 600",
-  28: "COR LN",
-  29: "STL LN",
-  30: "STL PG LN",
-  31: "SPT LN",
-  32: "MIC LN",
-  33: "OUTROS LN",
-  34: "BUD LN",
-  35: "BUD LN ZERO",
-  36: "COR LN ZERO",
-  37: "OUTROS LN ZERO",
-  38: "AP 600",
-  39: "BC 600",
-  40: "BUD 600",
-  41: "ORI 600",
-  42: "SK 600",
-  43: "SPT 600",
-  44: "STL 600",
-  45: "STL PG 600",
-  46: "OUTROS 600",
-  47: "AP 300",
-  48: "BC 300",
-  49: "BUD 300",
-  50: "ORI 300",
-  51: "SK 300",
-  52: "OUTROS 300",
-  53: "AP 1000",
-  54: "BC 1000",
-  55: "BUD 1000",
-  56: "ORI 1000",
-  57: "SK 1000",
-  58: "OUTROS 1000",
-};
+/**
+ * Converte a configuração por nome em posições de coluna (base 1)
+ * para o layout da planilha deste mês. Falha com mensagem clara se
+ * algum cabeçalho esperado não existir.
+ */
+function resolverCestas(cabecalhos) {
+  const nomes = cabecalhos.map(normalizar);
 
-function validarColunas(cabecalhos) {
-  for (const [posicao, esperado] of Object.entries(
-    COLUNAS_ESPERADAS
-  )) {
-    const encontrado = cabecalhos[Number(posicao) - 1];
-
-    if (normalizar(encontrado) !== esperado) {
-      throw new Error(
-        `Coluna ${posicao}: esperado "${esperado}", ` +
-        `encontrado "${encontrado}"`
-      );
+  const achar = (nome, inicio = 0, fim = nomes.length) => {
+    const i = nomes.indexOf(nome, inicio);
+    if (i < 0 || i >= fim) {
+      throw new Error(`Coluna "${nome}" não encontrada no Portfólio Ideal.`);
     }
+    return i;
+  };
+
+  // O bloco Core começa em "AP 600"; o High End fica entre a meta RGB e ele.
+  const inicioCore = achar("AP 600");
+  const inicioHighEnd = achar("RGB") + 1;
+  const blocos = {
+    HIGH_END: [inicioHighEnd, inicioCore],
+    CORE: [inicioCore, nomes.length],
+  };
+
+  const resolvidas = {};
+  for (const [base, configs] of Object.entries(CESTAS)) {
+    resolvidas[base] = configs.map((config) => {
+      const [ini, fim] = blocos[config.bloco];
+      return {
+        id: config.id,
+        nome: config.nome,
+        metaColuna: achar(config.meta, 0, inicioHighEnd) + 1,
+        produtos: config.produtos.map((p) => achar(p, ini, fim) + 1),
+      };
+    });
   }
+
+  console.log("\nColunas localizadas no Portfólio Ideal:");
+  console.table(
+    Object.fromEntries(
+      Object.values(resolvidas).flat().map((c) => [
+        c.nome,
+        { meta: `${c.metaColuna}:${nomes[c.metaColuna - 1]}`, produtos: c.produtos.join(",") },
+      ])
+    )
+  );
+
+  return resolvidas;
 }
 
 // ==================================================
 // 3. CÁLCULO DO PORTFÓLIO IDEAL
 // ==================================================
 
-function calcularCesta(registro, cabecalhos, config) {
+function calcularCesta(registro, cabecalhos, config, estoque) {
   const metaOriginal = numero(
     registro.linha[config.metaColuna - 1]
   );
@@ -310,6 +326,8 @@ function calcularCesta(registro, cabecalhos, config) {
       coluna,
       realizado,
       comprado: realizado > 0,
+      // null = unidade sem estoque integrado
+      estoque: estoqueDaCategoria(estoque, nome),
     };
   });
 
@@ -474,15 +492,51 @@ function montarRecomendacoes(cliente) {
 // 6. PROCESSAMENTO PRINCIPAL
 // ==================================================
 
+/**
+ * Competência a processar:
+ *   node scripts/ler-planilhas.mjs 202611  → usa o mês informado
+ *   node scripts/ler-planilhas.mjs         → usa o mês mais recente
+ *                                             que tenha as duas planilhas
+ */
+async function escolherCompetencia() {
+  const informada = process.argv[2];
+  if (informada) {
+    if (!/^\d{6}$/.test(informada)) {
+      throw new Error(`Competência inválida: "${informada}". Use AAAAMM, ex.: 202611.`);
+    }
+    return informada;
+  }
+
+  const arquivos = await fs.readdir(entrada);
+  const meses = (prefixo) =>
+    new Set(
+      arquivos
+        .map((a) => (a.startsWith(prefixo) ? a.slice(prefixo.length).match(/^(\d{6})\.xlsx$/)?.[1] : null))
+        .filter(Boolean)
+    );
+  const score = meses("fScore");
+  const disponiveis = [...meses("fPortifolioIdeal")].filter((m) => score.has(m)).sort();
+
+  if (!disponiveis.length) {
+    throw new Error("Nenhum par fScoreAAAAMM.xlsx + fPortifolioIdealAAAAMM.xlsx em dados/entrada.");
+  }
+  return disponiveis.at(-1);
+}
+
 async function executar() {
   console.log("\n=== SCORE 5 - PROCESSAMENTO ===\n");
 
-  const score = await lerExcel("fScore202610.xlsx");
+  const competencia = await escolherCompetencia();
+  console.log(`Competência: ${competencia}
+`);
+
+  const score = await lerExcel(`fScore${competencia}.xlsx`);
   const portfolio = await lerExcel(
-    "fPortifolioIdeal202610.xlsx"
+    `fPortifolioIdeal${competencia}.xlsx`
   );
 
-  validarColunas(portfolio.cabecalhos);
+  const CESTAS_MES = resolverCestas(portfolio.cabecalhos);
+  const estoques = await carregarEstoques(entrada);
 
   const mapaScore = criarMapa(
     score.registros,
@@ -501,7 +555,11 @@ async function executar() {
 
     if (!p) continue;
 
-    const configuracoes = CESTAS[p.base];
+    const configuracoes = CESTAS_MES[p.base];
+
+    // O prefixo da CHAVE PDV é o código da unidade (ex.: 747530_10936).
+    const codigoUnidade = p.pdv.split("_")[0];
+    const estoque = estoques.get(codigoUnidade);
 
     if (!configuracoes) {
       throw new Error(
@@ -519,7 +577,8 @@ async function executar() {
       calcularCesta(
         p,
         portfolio.cabecalhos,
-        config
+        config,
+        estoque
       )
     );
 
@@ -538,6 +597,9 @@ async function executar() {
       operacao: s.operacao,
       gv: s.gv,
       rn: s.rn,
+      codigoUnidade,
+      // Nome da unidade quando o estoque está integrado (ex.: "Patos", "Sumé")
+      unidadeEstoque: estoque?.nome ?? null,
 
       // Resultados comerciais
       faturamento: calcularFaturamento(s),

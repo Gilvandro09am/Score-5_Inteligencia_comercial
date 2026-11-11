@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "processar": "node scripts/ler-planilhas.mjs"
   },
   "dependencies": {
     "exceljs": "^4.4.0",

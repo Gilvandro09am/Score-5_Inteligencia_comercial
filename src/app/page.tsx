@@ -17,6 +17,7 @@ import {
   type Cliente,
   type ProximaAcao,
   type StatusMeta,
+  unidadeCurta,
 } from "@/lib/score5";
 
 // ==================================================
@@ -310,26 +311,38 @@ function FaixaCesta({ acao }: { acao: AcaoCesta }) {
           {cesta.produtos.map((p) => {
             const sug = sugeridosCol.get(p.coluna);
             const comprado = p.realizado > 0;
+            const semEstoque =
+              acao.comEstoque && !comprado && p.estoque?.status !== "DISPONIVEL";
             const estilo = sug
               ? "border-amber-400 bg-amber-100 text-amber-900"
               : comprado
                 ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                : "border-slate-200 bg-white text-slate-500";
+                : semEstoque
+                  ? "border-dashed border-slate-300 bg-slate-50 text-slate-400 line-through"
+                  : "border-slate-200 bg-white text-slate-500";
+            const saldoTxt =
+              p.estoque?.status === "DISPONIVEL"
+                ? ` · estoque: ${numero(p.estoque.saldo)} ${unidadeCurta(p.estoque.itens[0]?.unidade ?? "")}`
+                : "";
             return (
               <span
                 key={p.coluna}
                 title={
-                  sug
+                  (sug
                     ? sug.alavanca > 1
                       ? `Sugerido — conta para ${sug.alavanca} cestas pendentes`
                       : "Sugerido para fechar a cesta"
                     : comprado
                       ? `Positivado (${p.realizado} versão(ões))`
-                      : "Não positivado"
+                      : semEstoque
+                        ? p.estoque?.status === "NAO_MAPEADO"
+                          ? "Categoria sem produto definido na grade de estoque"
+                          : "Sem estoque na unidade"
+                        : "Não positivado") + saldoTxt
                 }
                 className={`inline-flex flex-none items-center gap-1 whitespace-nowrap rounded-md border px-2 py-1 text-xs font-medium ${estilo}`}
               >
-                <span aria-hidden>{comprado ? "✓" : sug ? "→" : "○"}</span>
+                <span aria-hidden>{comprado ? "✓" : sug ? "→" : semEstoque ? "✕" : "○"}</span>
                 {p.nome}
                 {p.realizado > 1 && (
                   <span className="rounded bg-emerald-600/10 px-1 tabular-nums">
@@ -350,7 +363,40 @@ function FaixaCesta({ acao }: { acao: AcaoCesta }) {
         <p className={`text-xs font-bold uppercase tracking-wide ${corTituloAcao}`}>
           {acao.titulo}
         </p>
-        <p className="mt-1 text-sm leading-snug text-slate-700">{acao.detalhe}</p>
+        {acao.comEstoque && sugeridos.length > 0 ? (
+          <>
+            <ul className="mt-1.5 space-y-1.5">
+              {sugeridos.map((s) => {
+                const item = s.itens[0];
+                return (
+                  <li key={s.coluna} className="text-sm leading-snug text-slate-700">
+                    <span className="font-semibold text-slate-900">
+                      {s.tipo === "VERSAO" ? `+1 versão ${s.nome}` : s.nome}
+                    </span>
+                    {item && (
+                      <span className="block text-xs text-slate-600">
+                        Cód. {item.codigo} · {item.descricao} ·{" "}
+                        <span className="font-semibold text-emerald-700">
+                          {numero(item.saldo)} {unidadeCurta(item.unidade)}
+                        </span>
+                        {s.itens.length > 1 && ` (+${s.itens.length - 1} opção)`}
+                      </span>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+            {acao.semCobertura > 0 && (
+              <p className="mt-2 rounded border border-rose-200 bg-rose-50 px-2 py-1 text-xs text-rose-800">
+                {plural(acao.semCobertura, "SKU", "SKUs")} sem estoque
+                {acao.bloqueados.length > 0 && ` (${acao.bloqueados.join(", ")})`} — acionar
+                supervisor/reposição.
+              </p>
+            )}
+          </>
+        ) : (
+          <p className="mt-1 text-sm leading-snug text-slate-700">{acao.detalhe}</p>
+        )}
       </div>
     </div>
   );
@@ -365,13 +411,34 @@ function PainelPdv({ cliente, urlFechar }: { cliente: Cliente; urlFechar: string
 
   // Roteiro: passos numerados na ordem em que o vendedor deve atacar
   const roteiro: string[] = [];
-  for (const a of pendentes) {
+  // Cestas que o estoque permite fechar vêm antes das travadas
+  const ordenadas = [
+    ...pendentes.filter((a) => a.semCobertura === 0),
+    ...pendentes.filter((a) => a.semCobertura > 0),
+  ];
+  for (const a of ordenadas) {
     const nomes = a.sugeridos
-      .map((s) => (s.tipo === "VERSAO" ? `+1 versão ${s.nome}` : s.nome))
+      .map((s) => {
+        const nome = s.tipo === "VERSAO" ? `+1 versão ${s.nome}` : s.nome;
+        const item = a.comEstoque ? s.itens[0] : undefined;
+        return item ? `${nome}: ${item.descricao}` : nome;
+      })
       .join(", ");
-    roteiro.push(
-      `Fechar ${a.cesta.nome}: positivar ${plural(a.cesta.faltam ?? 0, "SKU", "SKUs")} (${nomes}).`
-    );
+    const faltam = a.cesta.faltam ?? 0;
+    if (a.semCobertura === 0) {
+      roteiro.push(
+        `Fechar ${a.cesta.nome}: positivar ${plural(faltam, "SKU", "SKUs")} (${nomes}).`
+      );
+    } else if (a.sugeridos.length > 0) {
+      roteiro.push(
+        `Avançar ${a.cesta.nome}: positivar ${plural(a.sugeridos.length, "SKU", "SKUs")} com estoque (${nomes}). ` +
+          `${plural(a.semCobertura, "SKU depende", "SKUs dependem")} de reposição.`
+      );
+    } else {
+      roteiro.push(
+        `${a.cesta.nome}: faltam ${plural(faltam, "SKU", "SKUs")}, mas não há estoque na unidade — sinalizar ao supervisor.`
+      );
+    }
   }
   if (fat.status === "PENDENTE") {
     roteiro.push(
@@ -414,6 +481,19 @@ function PainelPdv({ cliente, urlFechar }: { cliente: Cliente; urlFechar: string
               </div>
             ))}
           </dl>
+          <p className="mt-2">
+            {cliente.unidadeEstoque ? (
+              <span className="inline-flex items-center gap-1.5 rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-600/20">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                Estoque {cliente.unidadeEstoque} integrado — sugestões só com produto disponível
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500 ring-1 ring-inset ring-slate-500/15">
+                <span className="h-1.5 w-1.5 rounded-full bg-slate-400" />
+                Estoque desta unidade ainda não integrado — confirmar disponibilidade
+              </span>
+            )}
+          </p>
         </div>
         <Link
           href={urlFechar}
@@ -477,6 +557,11 @@ function PainelPdv({ cliente, urlFechar }: { cliente: Cliente; urlFechar: string
             <span className="text-amber-700">→</span> Ofertar nesta visita
           </span>
           <span>○ Não positivado</span>
+          {cliente.unidadeEstoque && (
+            <span>
+              <span className="text-slate-400 line-through">✕ SKU</span> Sem estoque na unidade
+            </span>
+          )}
           <span>“2 cestas” = um único SKU avança duas cestas</span>
         </div>
       </div>
@@ -522,6 +607,10 @@ async function Painel({ searchParams }: { searchParams: SearchParams }) {
 
   // Filtros em cascata: Operação → GV → Setor
   const operacoes = opcoes(clientes.map((c) => c.operacao));
+  // Operações com estoque integrado (ex.: "Pau Brasil FL" → "Sumé")
+  const unidadePorOperacao = new Map(
+    clientes.filter((c) => c.unidadeEstoque).map((c) => [c.operacao, c.unidadeEstoque as string])
+  );
   const porOperacao = clientes.filter(
     (c) => !filtros.operacao || c.operacao === filtros.operacao
   );
@@ -610,7 +699,14 @@ async function Painel({ searchParams }: { searchParams: SearchParams }) {
                 rotulo="Operação"
                 valor={filtros.operacao}
                 todos="Todas"
-                itens={operacoes.map((o) => ({ valor: o, texto: o.replace(/^Pau Brasil /, "") }))}
+                itens={operacoes.map((o) => {
+                  const unidade = unidadePorOperacao.get(o);
+                  const nome = o.replace(/^Pau Brasil /, "");
+                  return {
+                    valor: o,
+                    texto: unidade && unidade !== nome ? `${nome} (${unidade}) · estoque` : unidade ? `${nome} · estoque` : nome,
+                  };
+                })}
               />
               <CampoSelect
                 nome="gv"
@@ -695,7 +791,7 @@ async function Painel({ searchParams }: { searchParams: SearchParams }) {
           <Kpi
             titulo="Fecha com 1 SKU"
             valor={numero(fechamentoRapido)}
-            detalhe="PDVs a um SKU de fechar cesta"
+            detalhe="PDVs a 1 SKU de fechar (com estoque)"
             destaque="rose"
           />
           <Kpi
