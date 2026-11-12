@@ -8,6 +8,8 @@ import {
   DIAS_SEMANA,
   diasVisita,
   dinheiro,
+  dinheiroSinal,
+  gapFaturamento,
   menorGap,
   numero,
   opcoes,
@@ -95,7 +97,10 @@ function ordenar(lista: Cliente[], ordem: string) {
       return copia.sort((a, b) => b.skusFaltantes - a.skusFaltantes);
     case "faturamento":
       return copia.sort(
-        (a, b) => (b.faturamento.faltam ?? 0) - (a.faturamento.faltam ?? 0)
+        // Maior gap negativo (mais abaixo da meta) primeiro; sem meta por último
+        (a, b) =>
+          (gapFaturamento(a.faturamento) ?? Infinity) -
+          (gapFaturamento(b.faturamento) ?? Infinity)
       );
     default:
       return copia.sort(comparaPrioridade);
@@ -411,7 +416,7 @@ function PainelPdv({ cliente, urlFechar }: { cliente: Cliente; urlFechar: string
   }
   if (fat.status === "PENDENTE") {
     roteiro.push(
-      `Faturamento: faltam ${dinheiro(fat.faltam)} para a meta de ${dinheiro(fat.meta)} — ampliar volume dos itens de maior giro.`
+      `Faturamento: real ${dinheiro(fat.realizado)} de meta ${dinheiro(fat.meta)} (gap ${dinheiroSinal(gapFaturamento(fat))}) — ampliar volume dos itens de maior giro.`
     );
   }
   const fechadas = acoes.filter((a) => a.cesta.status === "CONCLUIDA");
@@ -475,9 +480,9 @@ function PainelPdv({ cliente, urlFechar }: { cliente: Cliente; urlFechar: string
       {/* Números do PDV */}
       <div className="grid grid-cols-2 divide-slate-100 border-b border-slate-200 md:grid-cols-4 md:divide-x">
         {[
-          ["Meta faturamento", dinheiro(fat.meta)],
-          ["Realizado", dinheiro(fat.realizado)],
-          ["Falta faturar", fat.status === "PENDENTE" ? dinheiro(fat.faltam) : "—"],
+          ["Meta Task faturamento", dinheiro(fat.meta)],
+          ["Real Task faturamento", dinheiro(fat.realizado)],
+          ["Gap (Real − Meta)", dinheiroSinal(gapFaturamento(fat))],
           ["Atingimento", percentual(fat.atingimento)],
         ].map(([k, v]) => (
           <div key={k} className="px-5 py-3">
@@ -617,10 +622,11 @@ async function Painel({ searchParams }: { searchParams: SearchParams }) {
   const totalCestasFechadas = filtrados.reduce((t, c) => t + c.cestasConcluidas, 0);
   const totalSkus = filtrados.reduce((t, c) => t + c.skusFaltantes, 0);
   const fechamentoRapido = filtrados.filter((c) => menorGap(c) === 1).length;
-  const gapFaturamento = filtrados.reduce(
-    (t, c) => t + (c.faturamento.status === "PENDENTE" ? c.faturamento.faltam ?? 0 : 0),
-    0
-  );
+  // Gap da carteira = Real Task − Meta Task, somando só PDVs com meta
+  const comMetaFat = filtrados.filter((c) => c.faturamento.meta !== null);
+  const totalMetaFat = comMetaFat.reduce((t, c) => t + (c.faturamento.meta ?? 0), 0);
+  const totalRealFat = comMetaFat.reduce((t, c) => t + c.faturamento.realizado, 0);
+  const gapCarteira = totalRealFat - totalMetaFat;
   const pdvsFatPendente = filtrados.filter((c) => c.faturamento.status === "PENDENTE").length;
 
   const filtrosAtivos = CHAVES_FILTRO.filter((k) => k !== "ordem" && filtros[k]).length;
@@ -789,9 +795,9 @@ async function Painel({ searchParams }: { searchParams: SearchParams }) {
             destaque="emerald"
           />
           <Kpi
-            titulo="Gap de faturamento"
-            valor={dinheiro(gapFaturamento)}
-            detalhe={`${plural(pdvsFatPendente, "PDV abaixo", "PDVs abaixo")} da meta`}
+            titulo="Gap de faturamento (Real − Meta)"
+            valor={dinheiroSinal(comMetaFat.length ? gapCarteira : null)}
+            detalhe={`Real ${dinheiro(totalRealFat)} de meta ${dinheiro(totalMetaFat)}`}
             destaque="amber"
           />
           <Kpi
@@ -860,7 +866,7 @@ async function Painel({ searchParams }: { searchParams: SearchParams }) {
                       <td className="px-4 py-2.5 tabular-nums text-slate-600">
                         {c.gv} / {c.rn}
                       </td>
-                      <td className="w-40 px-4 py-2.5">
+                      <td className="w-52 px-4 py-2.5">
                         {c.faturamento.status === "SEM_META" ? (
                           <span className="text-xs text-slate-400">Sem meta</span>
                         ) : (
@@ -869,13 +875,20 @@ async function Painel({ searchParams }: { searchParams: SearchParams }) {
                               <span className="font-semibold text-slate-800">
                                 {percentual(c.faturamento.atingimento)}
                               </span>
-                              {c.faturamento.status === "PENDENTE" && (
-                                <span className="text-slate-500">−{dinheiro(c.faturamento.faltam)}</span>
-                              )}
+                              <span
+                                className={
+                                  (gapFaturamento(c.faturamento) ?? 0) < 0 ? "text-rose-600" : "text-emerald-600"
+                                }
+                              >
+                                {dinheiroSinal(gapFaturamento(c.faturamento))}
+                              </span>
                             </div>
                             <div className="mt-1">
                               <Barra valor={c.faturamento.atingimento} status={c.faturamento.status} />
                             </div>
+                            <p className="mt-0.5 text-[11px] tabular-nums text-slate-500">
+                              Real {dinheiro(c.faturamento.realizado)} / Meta {dinheiro(c.faturamento.meta)}
+                            </p>
                           </div>
                         )}
                       </td>

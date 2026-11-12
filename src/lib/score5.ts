@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { connection } from "next/server";
 
 // ==================================================
 // TIPOS (espelham dados/processados/clientes-score5.json)
@@ -103,6 +104,7 @@ export async function carregarClientes(): Promise<Cliente[]> {
     return JSON.parse(conteudo) as Cliente[];
   }
 
+  await connection(); // dados lidos no momento do pedido (o cache usa o relógio)
   if (cache && Date.now() - cache.em < CACHE_MS) return cache.dados;
 
   const resposta = await fetch(
@@ -135,6 +137,21 @@ export function dinheiro(valor: number | null | undefined) {
     currency: "BRL",
     maximumFractionDigits: 0,
   });
+}
+
+/** Valor em reais com sinal explícito: "+R$ 1.200", "−R$ 850". */
+export function dinheiroSinal(valor: number | null | undefined) {
+  if (valor === null || valor === undefined) return "—";
+  if (valor === 0) return dinheiro(0);
+  return `${valor > 0 ? "+" : "−"}${dinheiro(Math.abs(valor))}`;
+}
+
+/**
+ * Gap de faturamento = REAL TASK − META TASK (colunas do fScore).
+ * Negativo: abaixo da meta. Positivo: acima. null quando o PDV não tem meta.
+ */
+export function gapFaturamento(f: { meta: number | null; realizado: number }) {
+  return f.meta === null ? null : f.realizado - f.meta;
 }
 
 export function numero(valor: number | null | undefined) {

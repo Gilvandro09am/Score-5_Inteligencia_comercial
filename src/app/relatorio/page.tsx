@@ -14,6 +14,8 @@ import {
   diaDeHoje,
   diasVisita,
   dinheiro,
+  dinheiroSinal,
+  gapFaturamento,
   menorGap,
   NOME_DIA,
   numero,
@@ -326,13 +328,20 @@ async function ConteudoRelatorio({ searchParams }: { searchParams: SearchParams 
                       <td className="py-1.5 pr-2 tabular-nums">
                         {fat.status === "PENDENTE" ? (
                           <>
-                            <p className="font-bold text-rose-700">Falta {dinheiro(fat.faltam)}</p>
+                            <p className="font-bold text-rose-700">Gap {dinheiroSinal(gapFaturamento(fat))}</p>
                             <p className="text-[8.5px] text-slate-500">
-                              Meta {dinheiro(fat.meta)} · {percentual(fat.atingimento)}
+                              Real {dinheiro(fat.realizado)} · Meta {dinheiro(fat.meta)} · {percentual(fat.atingimento)}
                             </p>
                           </>
                         ) : fat.status === "CONCLUIDA" ? (
-                          <p className="font-semibold text-emerald-700">✓ Meta batida</p>
+                          <>
+                            <p className="font-semibold text-emerald-700">
+                              ✓ Gap {dinheiroSinal(gapFaturamento(fat))}
+                            </p>
+                            <p className="text-[8.5px] text-slate-500">
+                              Real {dinheiro(fat.realizado)} · Meta {dinheiro(fat.meta)}
+                            </p>
+                          </>
                         ) : (
                           <p className="text-slate-400">Sem meta</p>
                         )}
