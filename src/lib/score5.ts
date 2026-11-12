@@ -73,16 +73,55 @@ export type Cliente = {
   skusFaltantes: number;
 };
 
+// Em produção (Vercel) os dados vêm do Supabase Storage (bucket privado,
+// enviado por `npm run publicar`). Localmente, sem as variáveis do Supabase,
+// lê o arquivo gerado por `npm run processar`.
+export const SUPABASE_BUCKET = "score5";
+export const SUPABASE_ARQUIVO = "clientes-score5.json";
+
+// Cache em memória para não baixar o JSON (~5 MB) a cada acesso.
+const CACHE_MS = 5 * 60 * 1000;
+let cache: { dados: Cliente[]; em: number } | null = null;
+
 export async function carregarClientes(): Promise<Cliente[]> {
-  const caminho = path.join(
-    process.cwd(),
-    "dados",
-    "processados",
-    "clientes-score5.json"
+  const url = process.env.SUPABASE_URL;
+  const chave = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!url || !chave) {
+    if (process.env.VERCEL) {
+      throw new Error(
+        "SUPABASE_URL e/ou SUPABASE_SERVICE_ROLE_KEY não configuradas na Vercel (Settings → Environment Variables). Depois de adicionar, faça um Redeploy."
+      );
+    }
+    const caminho = path.join(
+      process.cwd(),
+      "dados",
+      "processados",
+      SUPABASE_ARQUIVO
+    );
+    const conteudo = await fs.readFile(caminho, "utf8");
+    return JSON.parse(conteudo) as Cliente[];
+  }
+
+  if (cache && Date.now() - cache.em < CACHE_MS) return cache.dados;
+
+  const resposta = await fetch(
+    `${url.replace(/\/$/, "")}/storage/v1/object/${SUPABASE_BUCKET}/${SUPABASE_ARQUIVO}`,
+    {
+      headers: { Authorization: `Bearer ${chave}`, apikey: chave },
+      cache: "no-store",
+    }
   );
 
-  const conteudo = await fs.readFile(caminho, "utf8");
-  return JSON.parse(conteudo) as Cliente[];
+  if (!resposta.ok) {
+    throw new Error(
+      `Falha ao baixar os dados do Supabase (${resposta.status}): ${await resposta.text()}`
+    );
+  }
+
+  const dados = (await resposta.json()) as Cliente[];
+  cache = { dados, em: Date.now() };
+  return dados;
 }
 
 // ==================================================

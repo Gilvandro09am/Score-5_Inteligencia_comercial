@@ -15,6 +15,8 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Score 5 · Inteligência Comercial",
   description: "Painel de ação comercial por PDV: faturamento, portfólio ideal e próxima melhor ação.",
+  // Site aberto (sem login): evita que apareça no Google.
+  robots: { index: false, follow: false },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

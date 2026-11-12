@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "processar": "node scripts/ler-planilhas.mjs"
+    "processar": "node scripts/ler-planilhas.mjs",
+    "publicar": "node --env-file=.env.local scripts/publicar-dados.mjs"
   },
   "dependencies": {
     "exceljs": "^4.4.0",
