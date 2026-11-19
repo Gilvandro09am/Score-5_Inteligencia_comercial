@@ -1,4 +1,4 @@
-// Envia dados/processados/clientes-score5.json para o Supabase Storage.
+// Envia os JSONs de dados/processados para o Supabase Storage.
 // Uso: npm run publicar   (lê SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY do .env.local)
 
 import fs from "node:fs/promises";
@@ -6,10 +6,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const BUCKET = "score5";
-const ARQUIVO = "clientes-score5.json";
+const ARQUIVOS = ["clientes-score5.json", "tarefas-score5.json"];
 
 const raiz = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const origem = path.join(raiz, "dados", "processados", ARQUIVO);
 
 const url = process.env.SUPABASE_URL?.replace(/\/$/, "");
 const chave = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -38,13 +37,12 @@ async function garantirBucket() {
   console.log(`Bucket privado "${BUCKET}" criado.`);
 }
 
-async function executar() {
+async function enviar(arquivo) {
+  const origem = path.join(raiz, "dados", "processados", arquivo);
   const conteudo = await fs.readFile(origem);
   JSON.parse(conteudo.toString("utf8")); // garante que o JSON é válido
 
-  await garantirBucket();
-
-  const r = await fetch(`${url}/storage/v1/object/${BUCKET}/${ARQUIVO}`, {
+  const r = await fetch(`${url}/storage/v1/object/${BUCKET}/${arquivo}`, {
     method: "POST",
     headers: {
       ...headers,
@@ -55,10 +53,25 @@ async function executar() {
     body: conteudo,
   });
 
-  if (!r.ok) throw new Error(`Falha no envio (${r.status}): ${await r.text()}`);
+  if (!r.ok) throw new Error(`Falha no envio de ${arquivo} (${r.status}): ${await r.text()}`);
 
   const mb = (conteudo.length / 1024 / 1024).toFixed(1);
-  console.log(`Dados publicados no Supabase (${mb} MB).`);
+  console.log(`Publicado: ${arquivo} (${mb} MB)`);
+}
+
+async function executar() {
+  await garantirBucket();
+
+  for (const arquivo of ARQUIVOS) {
+    try {
+      await fs.access(path.join(raiz, "dados", "processados", arquivo));
+    } catch {
+      console.log(`Pulado: ${arquivo} (não existe em dados/processados)`);
+      continue;
+    }
+    await enviar(arquivo);
+  }
+
   console.log("O site passa a mostrar os dados novos em até 5 minutos.");
 }
 

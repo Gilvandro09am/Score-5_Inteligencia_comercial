@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "processar": "node scripts/ler-planilhas.mjs",
+    "processar": "node scripts/ler-planilhas.mjs && node scripts/ler-tarefas.mjs",
     "publicar": "node --env-file=.env.local scripts/publicar-dados.mjs"
   },
   "dependencies": {

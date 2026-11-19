@@ -80,11 +80,12 @@ export type Cliente = {
 export const SUPABASE_BUCKET = "score5";
 export const SUPABASE_ARQUIVO = "clientes-score5.json";
 
-// Cache em memória para não baixar o JSON (~5 MB) a cada acesso.
+// Cache em memória para não baixar os JSONs (~5 MB) a cada acesso.
 const CACHE_MS = 5 * 60 * 1000;
-let cache: { dados: Cliente[]; em: number } | null = null;
+const cache = new Map<string, { dados: unknown; em: number }>();
 
-export async function carregarClientes(): Promise<Cliente[]> {
+// Lê um JSON processado: do Supabase Storage em produção, de dados/processados no local.
+async function carregarJson<T>(arquivo: string): Promise<T> {
   const url = process.env.SUPABASE_URL;
   const chave = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
@@ -94,21 +95,16 @@ export async function carregarClientes(): Promise<Cliente[]> {
         "SUPABASE_URL e/ou SUPABASE_SERVICE_ROLE_KEY não configuradas na Vercel (Settings → Environment Variables). Depois de adicionar, faça um Redeploy."
       );
     }
-    const caminho = path.join(
-      process.cwd(),
-      "dados",
-      "processados",
-      SUPABASE_ARQUIVO
-    );
-    const conteudo = await fs.readFile(caminho, "utf8");
-    return JSON.parse(conteudo) as Cliente[];
+    const caminho = path.join(process.cwd(), "dados", "processados", arquivo);
+    return JSON.parse(await fs.readFile(caminho, "utf8")) as T;
   }
 
   await connection(); // dados lidos no momento do pedido (o cache usa o relógio)
-  if (cache && Date.now() - cache.em < CACHE_MS) return cache.dados;
+  const emCache = cache.get(arquivo);
+  if (emCache && Date.now() - emCache.em < CACHE_MS) return emCache.dados as T;
 
   const resposta = await fetch(
-    `${url.replace(/\/$/, "")}/storage/v1/object/${SUPABASE_BUCKET}/${SUPABASE_ARQUIVO}`,
+    `${url.replace(/\/$/, "")}/storage/v1/object/${SUPABASE_BUCKET}/${arquivo}`,
     {
       headers: { Authorization: `Bearer ${chave}`, apikey: chave },
       cache: "no-store",
@@ -117,13 +113,90 @@ export async function carregarClientes(): Promise<Cliente[]> {
 
   if (!resposta.ok) {
     throw new Error(
-      `Falha ao baixar os dados do Supabase (${resposta.status}): ${await resposta.text()}`
+      `Falha ao baixar ${arquivo} do Supabase (${resposta.status}): ${await resposta.text()}`
     );
   }
 
-  const dados = (await resposta.json()) as Cliente[];
-  cache = { dados, em: Date.now() };
+  const dados = (await resposta.json()) as T;
+  cache.set(arquivo, { dados, em: Date.now() });
   return dados;
+}
+
+export function carregarClientes(): Promise<Cliente[]> {
+  return carregarJson<Cliente[]>(SUPABASE_ARQUIVO);
+}
+
+// ==================================================
+// TAREFAS BEES (aba Oportunidades do dia)
+// ==================================================
+
+export const ARQUIVO_TAREFAS = "tarefas-score5.json";
+
+// Formato compacto gerado por scripts/ler-tarefas.mjs
+type TarefasBrutas = {
+  geradoEm: string;
+  rotas: Record<string, string>;
+  operacoes: string[];
+  clusters: string[];
+  cestas: string[];
+  textos: string[];
+  nomes?: Record<string, string>; // "unb_pdv" → nome fantasia (Pedidos Cora / Promax)
+  // [operação, unb, pdv, setor, gv, cluster, cesta, texto, qtd solicitada, qtd já comprada]
+  linhas: [number, string, string, string, string, number, number, number, number | null, number | null][];
+};
+
+export type Tarefa = {
+  operacao: string;
+  unb: string;
+  pdv: string;
+  chave: string; // "unb_pdv", mesma chave do Score 5
+  setor: string;
+  gv: string;
+  cluster: string;
+  cesta: string;
+  texto: string;
+  solicitada: number | null;
+  comprada: number | null;
+  falta: number | null; // null = tarefa sem quantidade definida
+};
+
+export type BaseTarefas = {
+  geradoEm: string;
+  rotas: Record<string, string>;
+  cestas: string[];
+  nomes: Record<string, string>;
+  tarefas: Tarefa[];
+};
+
+// Tarefas em aberto (OPEN) da rota do dia. Sem o arquivo publicado, devolve vazio.
+export async function carregarTarefas(): Promise<BaseTarefas> {
+  let b: TarefasBrutas;
+  try {
+    b = await carregarJson<TarefasBrutas>(ARQUIVO_TAREFAS);
+  } catch (erro) {
+    console.error(erro);
+    return { geradoEm: "", rotas: {}, cestas: [], nomes: {}, tarefas: [] };
+  }
+  return {
+    geradoEm: b.geradoEm,
+    rotas: b.rotas,
+    cestas: b.cestas,
+    nomes: b.nomes ?? {},
+    tarefas: b.linhas.map(([op, unb, pdv, setor, gv, cl, ce, tx, sol, ja]) => ({
+      operacao: b.operacoes[op],
+      unb,
+      pdv,
+      chave: `${unb}_${pdv}`,
+      setor,
+      gv,
+      cluster: b.clusters[cl],
+      cesta: b.cestas[ce],
+      texto: b.textos[tx],
+      solicitada: sol,
+      comprada: ja,
+      falta: sol === null ? null : Math.max(0, sol - (ja ?? 0)),
+    })),
+  };
 }
 
 // ==================================================

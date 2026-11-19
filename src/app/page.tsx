@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Suspense } from "react";
+import { Abas } from "@/components/Abas";
 import { CampoSelect } from "@/components/CampoSelect";
 import {
   acoesPorCesta,
@@ -661,6 +662,7 @@ async function Painel({ searchParams }: { searchParams: SearchParams }) {
           </div>
         </div>
       </header>
+      <Abas atual="carteira" />
 
       <div className="mx-auto max-w-[1400px] space-y-5 px-4 py-6 md:px-6">
         {/* Filtros */}
