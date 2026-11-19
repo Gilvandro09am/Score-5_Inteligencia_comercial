@@ -16,6 +16,8 @@ import {
   percentual,
   plural,
   proximaAcao,
+  REGIOES,
+  regiaoDaOperacao,
   type AcaoCesta,
   type Cliente,
   type ProximaAcao,
@@ -28,6 +30,7 @@ import {
 // ==================================================
 
 const CHAVES_FILTRO = [
+  "regiao",
   "operacao",
   "gv",
   "setor",
@@ -579,13 +582,19 @@ async function Painel({ searchParams }: { searchParams: SearchParams }) {
 
   const clientes = await carregarClientes();
 
-  // Filtros em cascata: Operação → GV → Setor
-  const operacoes = opcoes(clientes.map((c) => c.operacao));
+  // Filtros em cascata: Região → Operação → GV → Setor
+  const regioes = Object.keys(REGIOES).filter((r) =>
+    clientes.some((c) => regiaoDaOperacao(c.operacao) === r)
+  );
+  const porRegiao = clientes.filter(
+    (c) => !filtros.regiao || regiaoDaOperacao(c.operacao) === filtros.regiao
+  );
+  const operacoes = opcoes(porRegiao.map((c) => c.operacao));
   // Operações com estoque integrado (ex.: "Pau Brasil FL" → "Sumé")
   const unidadePorOperacao = new Map(
     clientes.filter((c) => c.unidadeEstoque).map((c) => [c.operacao, c.unidadeEstoque as string])
   );
-  const porOperacao = clientes.filter(
+  const porOperacao = porRegiao.filter(
     (c) => !filtros.operacao || c.operacao === filtros.operacao
   );
   const gvs = opcoes(porOperacao.map((c) => c.gv));
@@ -668,7 +677,14 @@ async function Painel({ searchParams }: { searchParams: SearchParams }) {
           </div>
 
           <form method="GET" className="space-y-3">
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-9">
+              <CampoSelect
+                nome="regiao"
+                rotulo="Região"
+                valor={filtros.regiao}
+                todos="Todas"
+                itens={regioes.map((r) => ({ valor: r, texto: r }))}
+              />
               <CampoSelect
                 nome="operacao"
                 rotulo="Operação"
@@ -756,6 +772,7 @@ async function Painel({ searchParams }: { searchParams: SearchParams }) {
               <Link
                 href={`/relatorio?${new URLSearchParams(
                   Object.entries({
+                    regiao: filtros.regiao,
                     operacao: filtros.operacao,
                     gv: filtros.gv,
                     setor: filtros.setor,
@@ -767,7 +784,7 @@ async function Painel({ searchParams }: { searchParams: SearchParams }) {
                 Roteiro do GV (PDF)
               </Link>
               <p className="ml-auto text-xs text-slate-500">
-                Operação, GV e Setor são em cascata — aplique para atualizar as opções.
+                Região, Operação, GV e Setor são em cascata — aplique para atualizar as opções.
               </p>
             </div>
           </form>

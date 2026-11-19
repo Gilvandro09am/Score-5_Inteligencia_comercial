@@ -463,6 +463,21 @@ export function comparaPrioridade(a: Cliente, b: Cliente) {
   return a.nomeFantasia.localeCompare(b.nomeFantasia, "pt-BR");
 }
 
+// Agrupamento de operações por região (filtro "Região")
+export const REGIOES: Record<string, string[]> = {
+  Patos: ["Pau Brasil Patos", "Pau Brasil FL"],
+  Sousa: ["Pau Brasil Sousa", "Pau Brasil FL / Itaporanga"],
+  Guarabira: ["Pau Brasil Guarabira"],
+  Bahia: ["Pau Brasil Brumado", "Pau Brasil Caculé", "Pau Brasil Barra da Estiva"],
+};
+
+export function regiaoDaOperacao(operacao: string): string | null {
+  for (const [regiao, operacoes] of Object.entries(REGIOES)) {
+    if (operacoes.includes(operacao)) return regiao;
+  }
+  return null;
+}
+
 export function opcoes(valores: string[]) {
   return [...new Set(valores)]
     .filter(Boolean)

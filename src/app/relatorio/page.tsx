@@ -22,6 +22,8 @@ import {
   opcoes,
   percentual,
   plural,
+  REGIOES,
+  regiaoDaOperacao,
   type Cliente,
 } from "@/lib/score5";
 import { BotaoPdf } from "./BotaoPdf";
@@ -115,6 +117,7 @@ async function ConteudoRelatorio({ searchParams }: { searchParams: SearchParams 
   };
 
   const filtros = {
+    regiao: ler("regiao"),
     operacao: ler("operacao"),
     gv: ler("gv"),
     setor: ler("setor"),
@@ -124,9 +127,15 @@ async function ConteudoRelatorio({ searchParams }: { searchParams: SearchParams 
 
   const clientes = await carregarClientes();
 
-  // Cascata Operação → GV → Setor (mesma lógica do painel)
-  const operacoes = opcoes(clientes.map((c) => c.operacao));
-  const porOperacao = clientes.filter((c) => !filtros.operacao || c.operacao === filtros.operacao);
+  // Cascata Região → Operação → GV → Setor (mesma lógica do painel)
+  const regioes = Object.keys(REGIOES).filter((r) =>
+    clientes.some((c) => regiaoDaOperacao(c.operacao) === r)
+  );
+  const porRegiao = clientes.filter(
+    (c) => !filtros.regiao || regiaoDaOperacao(c.operacao) === filtros.regiao
+  );
+  const operacoes = opcoes(porRegiao.map((c) => c.operacao));
+  const porOperacao = porRegiao.filter((c) => !filtros.operacao || c.operacao === filtros.operacao);
   const gvs = opcoes(porOperacao.map((c) => c.gv));
   const porGv = porOperacao.filter((c) => !filtros.gv || c.gv === filtros.gv);
   const setores = opcoes(porGv.map((c) => c.rn));
@@ -154,7 +163,11 @@ async function ConteudoRelatorio({ searchParams }: { searchParams: SearchParams 
 
   const nomeDia = filtros.visita === "TODOS" ? "Todos os dias" : NOME_DIA[filtros.visita] ?? filtros.visita;
   const escopo = [
-    filtros.operacao ? filtros.operacao.replace(/^Pau Brasil /, "") : "Todas as operações",
+    filtros.operacao
+      ? filtros.operacao.replace(/^Pau Brasil /, "")
+      : filtros.regiao
+        ? `Região ${filtros.regiao}`
+        : "Todas as operações",
     filtros.gv ? rotuloGv(filtros.gv) : "Todos os GVs",
     filtros.setor ? rotuloSetor(filtros.setor) : null,
   ]
@@ -163,7 +176,9 @@ async function ConteudoRelatorio({ searchParams }: { searchParams: SearchParams 
 
   const nomeArquivo = [
     "Score5",
-    filtros.operacao ? filtros.operacao.replace(/^Pau Brasil /, "").replace(/\W+/g, "") : null,
+    filtros.operacao
+      ? filtros.operacao.replace(/^Pau Brasil /, "").replace(/\W+/g, "")
+      : filtros.regiao || null,
     filtros.gv ? `GV${filtros.gv}` : null,
     filtros.setor ? `Setor${filtros.setor}` : null,
     filtros.visita,
@@ -173,7 +188,7 @@ async function ConteudoRelatorio({ searchParams }: { searchParams: SearchParams 
     .join("_");
 
   const voltar = new URLSearchParams();
-  for (const k of ["operacao", "gv", "setor"] as const) if (filtros[k]) voltar.set(k, filtros[k]);
+  for (const k of ["regiao", "operacao", "gv", "setor"] as const) if (filtros[k]) voltar.set(k, filtros[k]);
   if (filtros.visita !== "TODOS") voltar.set("visita", filtros.visita);
 
   return (
@@ -181,6 +196,15 @@ async function ConteudoRelatorio({ searchParams }: { searchParams: SearchParams 
       {/* Barra de controle — não sai no PDF */}
       <div className="border-b border-slate-300 bg-white print:hidden">
         <form method="GET" className="mx-auto flex max-w-[297mm] flex-wrap items-end gap-3 px-4 py-4">
+          <div className="w-32">
+            <CampoSelect
+              nome="regiao"
+              rotulo="Região"
+              valor={filtros.regiao}
+              todos="Todas"
+              itens={regioes.map((r) => ({ valor: r, texto: r }))}
+            />
+          </div>
           <div className="w-44">
             <CampoSelect
               nome="operacao"
