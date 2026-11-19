@@ -166,7 +166,7 @@ async function ConteudoRelatorio({ searchParams }: { searchParams: SearchParams 
     filtros.operacao
       ? filtros.operacao.replace(/^Pau Brasil /, "")
       : filtros.regiao
-        ? `Região ${filtros.regiao}`
+        ? `Operação ${filtros.regiao}`
         : "Todas as operações",
     filtros.gv ? rotuloGv(filtros.gv) : "Todos os GVs",
     filtros.setor ? rotuloSetor(filtros.setor) : null,
@@ -196,10 +196,10 @@ async function ConteudoRelatorio({ searchParams }: { searchParams: SearchParams 
       {/* Barra de controle — não sai no PDF */}
       <div className="border-b border-slate-300 bg-white print:hidden">
         <form method="GET" className="mx-auto flex max-w-[297mm] flex-wrap items-end gap-3 px-4 py-4">
-          <div className="w-32">
+          <div className="w-40">
             <CampoSelect
               nome="regiao"
-              rotulo="Região"
+              rotulo="Operação agrupada"
               valor={filtros.regiao}
               todos="Todas"
               itens={regioes.map((r) => ({ valor: r, texto: r }))}

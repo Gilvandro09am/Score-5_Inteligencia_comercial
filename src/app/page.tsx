@@ -680,7 +680,7 @@ async function Painel({ searchParams }: { searchParams: SearchParams }) {
             <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-9">
               <CampoSelect
                 nome="regiao"
-                rotulo="Região"
+                rotulo="Operação agrupada"
                 valor={filtros.regiao}
                 todos="Todas"
                 itens={regioes.map((r) => ({ valor: r, texto: r }))}
@@ -784,7 +784,7 @@ async function Painel({ searchParams }: { searchParams: SearchParams }) {
                 Roteiro do GV (PDF)
               </Link>
               <p className="ml-auto text-xs text-slate-500">
-                Região, Operação, GV e Setor são em cascata — aplique para atualizar as opções.
+                Operação agrupada, Operação, GV e Setor são em cascata — aplique para atualizar as opções.
               </p>
             </div>
           </form>
