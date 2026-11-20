@@ -22,7 +22,7 @@ export const metadata: Metadata = {
 // FILTROS
 // ==================================================
 
-const CHAVES = ["regiao", "operacao", "gv", "setor", "pdv", "cesta", "cluster", "falta"] as const;
+const CHAVES = ["regiao", "operacao", "gv", "setor", "cidade", "pdv", "cesta", "cluster", "falta"] as const;
 type Filtros = Record<(typeof CHAVES)[number], string>;
 
 const FAIXAS_FALTA: Record<string, string> = {
@@ -110,7 +110,9 @@ async function Oportunidades({ searchParams }: { searchParams: SearchParams }) {
   const gvs = opcoes(porOperacao.map((t) => t.gv));
   const porGv = porOperacao.filter((t) => !filtros.gv || t.gv === filtros.gv);
   const setores = opcoes(porGv.map((t) => t.setor));
-  const porSetor = porGv.filter((t) => !filtros.setor || t.setor === filtros.setor);
+  const porRn = porGv.filter((t) => !filtros.setor || t.setor === filtros.setor);
+  const cidades = opcoes(porRn.map((t) => t.cidade));
+  const porSetor = porRn.filter((t) => !filtros.cidade || t.cidade === filtros.cidade);
 
   const termo = filtros.pdv.toLocaleLowerCase("pt-BR");
   const porPdv = porSetor.filter(
@@ -184,7 +186,7 @@ async function Oportunidades({ searchParams }: { searchParams: SearchParams }) {
           </div>
 
           <form method="GET" className="space-y-3">
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-5 xl:grid-cols-9">
               <CampoSelect
                 nome="regiao"
                 rotulo="Operação agrupada"
@@ -210,6 +212,13 @@ async function Oportunidades({ searchParams }: { searchParams: SearchParams }) {
                 rotulo="RN (setor)"
                 valor={filtros.setor}
                 itens={setores.map((s) => ({ valor: s, texto: s }))}
+              />
+              <CampoSelect
+                nome="cidade"
+                rotulo="Cidade"
+                valor={filtros.cidade}
+                todos="Todas"
+                itens={cidades.map((c) => ({ valor: c, texto: c }))}
               />
               <label className="block text-sm">
                 <span className="mb-1 block text-xs font-medium text-slate-600">PDV</span>
@@ -331,7 +340,7 @@ async function Oportunidades({ searchParams }: { searchParams: SearchParams }) {
                             <>
                               <p className="font-semibold text-slate-900">{nomeDe(t) || `PDV ${t.pdv}`}</p>
                               <p className="text-xs text-slate-500">
-                                {t.pdv} · GV {t.gv} · {t.operacao.replace(/^Pau Brasil /, "")}
+                                {t.pdv} · {t.cidade} · GV {t.gv} · {t.operacao.replace(/^Pau Brasil /, "")}
                               </p>
                             </>
                           )}

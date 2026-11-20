@@ -52,6 +52,9 @@ export type Cliente = {
   nome: string;
   nomeFantasia: string;
   visita: string;
+  /** Cidade do cadastro dClientes ("Sem cidade" quando não encontrado) */
+  cidade?: string;
+  bairro?: string;
   base: string;
   operacao: string;
   gv: string;
@@ -140,7 +143,8 @@ type TarefasBrutas = {
   clusters: string[];
   cestas: string[];
   textos: string[];
-  nomes?: Record<string, string>; // "unb_pdv" → nome fantasia (Pedidos Cora / Promax)
+  nomes?: Record<string, string>; // "unb_pdv" → nome fantasia (dClientes / Pedidos Cora / Promax)
+  cidades?: Record<string, string>; // "unb_pdv" → cidade (dClientes)
   // [operação, unb, pdv, setor, gv, cluster, cesta, texto, qtd solicitada, qtd já comprada]
   linhas: [number, string, string, string, string, number, number, number, number | null, number | null][];
 };
@@ -152,6 +156,7 @@ export type Tarefa = {
   chave: string; // "unb_pdv", mesma chave do Score 5
   setor: string;
   gv: string;
+  cidade: string;
   cluster: string;
   cesta: string;
   texto: string;
@@ -189,6 +194,7 @@ export async function carregarTarefas(): Promise<BaseTarefas> {
       chave: `${unb}_${pdv}`,
       setor,
       gv,
+      cidade: b.cidades?.[`${unb}_${pdv}`] || "Sem cidade",
       cluster: b.clusters[cl],
       cesta: b.cestas[ce],
       texto: b.textos[tx],

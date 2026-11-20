@@ -10,24 +10,13 @@ import fs from "node:fs/promises";
 import readline from "node:readline";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { carregarCadastro, FILIAL_UNB } from "./cadastro-clientes.mjs";
 
 const raiz = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const entrada = path.join(raiz, "dados", "entrada");
 const saida = path.join(raiz, "dados", "processados");
 const ARQUIVO_SAIDA = "tarefas-score5.json";
 const PASTAS = [entrada, path.resolve(raiz, "..", "painel-tasks-compra", "entrada")];
-
-// Filial do Promax → código UNB do BEES
-const FILIAL_UNB = {
-  "221/0003": "747530", // Patos
-  "221/0004": "747548", // Sumé (FL)
-  "348/0005": "1036580", // Guarabira
-  "064/0001": "487570", // Sousa
-  "064/0002": "820288", // Itaporanga
-  "361/0006": "1044303", // Brumado
-  "361/0007": "1044591", // Barra da Estiva
-  "361/0008": "1045180", // Caculé
-};
 
 // Arquivos das pastas de entrada; com o mesmo nome em duas pastas, fica o mais recente
 async function listarArquivos() {
@@ -281,19 +270,23 @@ async function executar() {
     console.log(`  ${n} tarefas em aberto na rota (${Object.entries(ultimaData).map(([o, d]) => `${o}: ${d}`).join("; ")})`);
   }
 
+  // Nome e cidade: cadastro dClientes primeiro; nome também dos CSVs de pedidos
+  const cadastro = await carregarCadastro(raiz);
   const nomeDe = await carregarNomes(todos);
   const nomes = {};
+  const cidades = {};
   for (const l of linhas) {
     const chave = `${l[1]}_${l[2]}`;
-    if (!(chave in nomes)) {
-      const n = nomeDe(chave);
-      if (n) nomes[chave] = n;
-    }
+    if (chave in cidades) continue;
+    const c = cadastro.get(chave);
+    const n = c?.nome || nomeDe(chave);
+    if (n) nomes[chave] = n;
+    cidades[chave] = c?.cidade || "Sem cidade";
   }
   const pdvs = new Set(linhas.map((l) => `${l[1]}_${l[2]}`)).size;
   console.log(`Nome fantasia encontrado para ${Object.keys(nomes).length} de ${pdvs} PDVs`);
 
-  const resultado = { geradoEm: new Date().toISOString(), rotas, ...dic, nomes, linhas };
+  const resultado = { geradoEm: new Date().toISOString(), rotas, ...dic, nomes, cidades, linhas };
   await fs.mkdir(saida, { recursive: true });
   await fs.writeFile(path.join(saida, ARQUIVO_SAIDA), JSON.stringify(resultado));
   console.log(`Tarefas em aberto: ${linhas.length} → dados/processados/${ARQUIVO_SAIDA}`);

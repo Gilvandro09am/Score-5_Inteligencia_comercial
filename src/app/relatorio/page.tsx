@@ -121,6 +121,7 @@ async function ConteudoRelatorio({ searchParams }: { searchParams: SearchParams 
     operacao: ler("operacao"),
     gv: ler("gv"),
     setor: ler("setor"),
+    cidade: ler("cidade"),
     visita: ler("visita") || diaDeHoje(agora),
     todos: ler("todos") === "1",
   };
@@ -139,7 +140,9 @@ async function ConteudoRelatorio({ searchParams }: { searchParams: SearchParams 
   const gvs = opcoes(porOperacao.map((c) => c.gv));
   const porGv = porOperacao.filter((c) => !filtros.gv || c.gv === filtros.gv);
   const setores = opcoes(porGv.map((c) => c.rn));
-  const porSetor = porGv.filter((c) => !filtros.setor || c.rn === filtros.setor);
+  const porRn = porGv.filter((c) => !filtros.setor || c.rn === filtros.setor);
+  const cidades = opcoes(porRn.map((c) => c.cidade || "Sem cidade"));
+  const porSetor = porRn.filter((c) => !filtros.cidade || (c.cidade || "Sem cidade") === filtros.cidade);
 
   const doDia = porSetor.filter((c) =>
     filtros.visita === "TODOS" ? true : diasVisita(c.visita).includes(filtros.visita)
@@ -170,6 +173,7 @@ async function ConteudoRelatorio({ searchParams }: { searchParams: SearchParams 
         : "Todas as operações",
     filtros.gv ? rotuloGv(filtros.gv) : "Todos os GVs",
     filtros.setor ? rotuloSetor(filtros.setor) : null,
+    filtros.cidade || null,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -181,6 +185,7 @@ async function ConteudoRelatorio({ searchParams }: { searchParams: SearchParams 
       : filtros.regiao || null,
     filtros.gv ? `GV${filtros.gv}` : null,
     filtros.setor ? `Setor${filtros.setor}` : null,
+    filtros.cidade ? filtros.cidade.normalize("NFD").replace(/[^A-Za-z0-9]/g, "") : null,
     filtros.visita,
     dataISO(agora),
   ]
@@ -188,7 +193,7 @@ async function ConteudoRelatorio({ searchParams }: { searchParams: SearchParams 
     .join("_");
 
   const voltar = new URLSearchParams();
-  for (const k of ["regiao", "operacao", "gv", "setor"] as const) if (filtros[k]) voltar.set(k, filtros[k]);
+  for (const k of ["regiao", "operacao", "gv", "setor", "cidade"] as const) if (filtros[k]) voltar.set(k, filtros[k]);
   if (filtros.visita !== "TODOS") voltar.set("visita", filtros.visita);
 
   return (
@@ -228,6 +233,15 @@ async function ConteudoRelatorio({ searchParams }: { searchParams: SearchParams 
               rotulo="Setor"
               valor={filtros.setor}
               itens={setores.map((s) => ({ valor: s, texto: s === "-1" ? "Sem setor" : s }))}
+            />
+          </div>
+          <div className="w-44">
+            <CampoSelect
+              nome="cidade"
+              rotulo="Cidade"
+              valor={filtros.cidade}
+              todos="Todas"
+              itens={cidades.map((c) => ({ valor: c, texto: c }))}
             />
           </div>
           <label className="block w-40 text-sm">
@@ -346,6 +360,7 @@ async function ConteudoRelatorio({ searchParams }: { searchParams: SearchParams 
                         <p className="font-bold text-slate-900">{c.nomeFantasia}</p>
                         <p className="text-[8.5px] text-slate-500">
                           {c.pdv} · {c.base}
+                          {c.cidade ? ` · ${c.cidade}` : ""}
                         </p>
                       </td>
 

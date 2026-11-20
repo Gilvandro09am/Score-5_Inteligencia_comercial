@@ -4,6 +4,7 @@ import { XMLParser } from "fast-xml-parser";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { carregarCadastro } from "./cadastro-clientes.mjs";
 import { carregarEstoques, estoqueDaCategoria } from "./estoque.mjs";
 
 const raiz = path.resolve(
@@ -523,6 +524,11 @@ async function escolherCompetencia() {
   return disponiveis.at(-1);
 }
 
+// CHAVE PDV do Score 5 já é "unb_pdv" (ex.: 747530_10936), igual à do cadastro
+function chavePdvCadastro(pdv) {
+  return String(pdv).trim();
+}
+
 async function executar() {
   console.log("\n=== SCORE 5 - PROCESSAMENTO ===\n");
 
@@ -537,6 +543,7 @@ async function executar() {
 
   const CESTAS_MES = resolverCestas(portfolio.cabecalhos);
   const estoques = await carregarEstoques(entrada);
+  const cadastro = await carregarCadastro(raiz);
 
   const mapaScore = criarMapa(
     score.registros,
@@ -591,6 +598,8 @@ async function executar() {
       nome: p.nome || s.nome,
       nomeFantasia: p.nome || s.nome,
       visita: p.visita || s.visita || "Indefinido",
+      cidade: cadastro.get(chavePdvCadastro(s.pdv))?.cidade || "Sem cidade",
+      bairro: cadastro.get(chavePdvCadastro(s.pdv))?.bairro || "",
 
       // Estrutura comercial
       base: p.base,

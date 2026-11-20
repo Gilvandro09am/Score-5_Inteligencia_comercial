@@ -35,6 +35,7 @@ const CHAVES_FILTRO = [
   "operacao",
   "gv",
   "setor",
+  "cidade",
   "visita",
   "pdv",
   "nome",
@@ -449,6 +450,7 @@ function PainelPdv({ cliente, urlFechar }: { cliente: Cliente; urlFechar: string
               ["PDV", cliente.pdv],
               ["Base", cliente.base],
               ["Visita", cliente.visita],
+              ["Cidade", [cliente.cidade, cliente.bairro].filter(Boolean).join(" · ") || "—"],
               ["GV", cliente.gv],
               ["Setor", cliente.rn],
               ["Operação", cliente.operacao],
@@ -601,7 +603,9 @@ async function Painel({ searchParams }: { searchParams: SearchParams }) {
   const gvs = opcoes(porOperacao.map((c) => c.gv));
   const porGv = porOperacao.filter((c) => !filtros.gv || c.gv === filtros.gv);
   const setores = opcoes(porGv.map((c) => c.rn));
-  const porSetor = porGv.filter((c) => !filtros.setor || c.rn === filtros.setor);
+  const porRn = porGv.filter((c) => !filtros.setor || c.rn === filtros.setor);
+  const cidades = opcoes(porRn.map((c) => c.cidade || "Sem cidade"));
+  const porSetor = porRn.filter((c) => !filtros.cidade || (c.cidade || "Sem cidade") === filtros.cidade);
 
   const diasDisponiveis = new Set(porSetor.flatMap((c) => diasVisita(c.visita)));
   const dias = DIAS_SEMANA.filter((d) => diasDisponiveis.has(d));
@@ -679,7 +683,7 @@ async function Painel({ searchParams }: { searchParams: SearchParams }) {
           </div>
 
           <form method="GET" className="space-y-3">
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-9">
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-10">
               <CampoSelect
                 nome="regiao"
                 rotulo="Operação agrupada"
@@ -712,6 +716,13 @@ async function Painel({ searchParams }: { searchParams: SearchParams }) {
                 rotulo="Setor"
                 valor={filtros.setor}
                 itens={setores.map((s) => ({ valor: s, texto: s === "-1" ? "Sem setor" : s }))}
+              />
+              <CampoSelect
+                nome="cidade"
+                rotulo="Cidade"
+                valor={filtros.cidade}
+                todos="Todas"
+                itens={cidades.map((c) => ({ valor: c, texto: c }))}
               />
               <CampoSelect
                 nome="visita"
@@ -778,6 +789,7 @@ async function Painel({ searchParams }: { searchParams: SearchParams }) {
                     operacao: filtros.operacao,
                     gv: filtros.gv,
                     setor: filtros.setor,
+                    cidade: filtros.cidade,
                     visita: filtros.visita === "Indefinido" ? "" : filtros.visita,
                   }).filter(([, v]) => v)
                 ).toString()}`}
@@ -786,7 +798,7 @@ async function Painel({ searchParams }: { searchParams: SearchParams }) {
                 Roteiro do GV (PDF)
               </Link>
               <p className="ml-auto text-xs text-slate-500">
-                Operação agrupada, Operação, GV e Setor são em cascata — aplique para atualizar as opções.
+                Operação agrupada, Operação, GV, Setor e Cidade são em cascata — aplique para atualizar as opções.
               </p>
             </div>
           </form>
@@ -881,7 +893,10 @@ async function Painel({ searchParams }: { searchParams: SearchParams }) {
                           </p>
                         </Link>
                       </td>
-                      <td className="px-4 py-2.5 text-slate-600">{c.visita.replace(/\/$/, "")}</td>
+                      <td className="px-4 py-2.5 text-slate-600">
+                        {c.visita.replace(/\/$/, "")}
+                        {c.cidade && <p className="text-xs text-slate-400">{c.cidade}</p>}
+                      </td>
                       <td className="px-4 py-2.5 tabular-nums text-slate-600">
                         {c.gv} / {c.rn}
                       </td>
