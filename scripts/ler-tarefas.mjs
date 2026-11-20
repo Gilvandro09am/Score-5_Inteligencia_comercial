@@ -263,6 +263,7 @@ async function executar() {
         idxTexto(texto),
         numeroOuNulo(r["QTD Solicitada"]),
         numeroOuNulo(r["QTD Já Comprada"]),
+        numeroOuNulo(r["Pontuação"]),
       ]);
       n++;
     }

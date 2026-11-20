@@ -15,14 +15,14 @@ import {
 } from "@/lib/score5";
 
 export const metadata: Metadata = {
-  title: "Oportunidades do dia · Score 5",
+  title: "Oportunidades de task · Score 5",
 };
 
 // ==================================================
 // FILTROS
 // ==================================================
 
-const CHAVES = ["regiao", "operacao", "gv", "setor", "cidade", "pdv", "cesta", "cluster", "falta"] as const;
+const CHAVES = ["regiao", "operacao", "gv", "setor", "cidade", "pdv", "cesta", "cluster", "falta", "pontos", "ordem"] as const;
 type Filtros = Record<(typeof CHAVES)[number], string>;
 
 const FAIXAS_FALTA: Record<string, string> = {
@@ -45,6 +45,24 @@ function naFaixa(t: Tarefa, faixa: string) {
       return t.falta === Number(faixa);
   }
 }
+
+const FAIXAS_PONTOS: Record<string, string> = {
+  "200": "200 pontos ou mais",
+  "100": "100 pontos ou mais",
+  "50": "50 pontos ou mais",
+  menos50: "Menos de 50 pontos",
+};
+
+function naFaixaPontos(t: Tarefa, faixa: string) {
+  if (!faixa) return true;
+  if (faixa === "menos50") return t.pontos < 50;
+  return t.pontos >= Number(faixa);
+}
+
+const ORDENS: Record<string, string> = {
+  fechar: "Mais perto de fechar",
+  pontos: "Maior pontuação",
+};
 
 // Menor quantidade primeiro (fecha mais rápido); sem quantidade e já atingidas por último
 function pesoFalta(t: Tarefa) {
@@ -122,19 +140,25 @@ async function Oportunidades({ searchParams }: { searchParams: SearchParams }) {
   const porCluster = porPdv.filter((t) => !filtros.cluster || t.cluster === filtros.cluster);
   const cestas = base.cestas.filter((c) => porCluster.some((t) => t.cesta === c));
   const porCesta = porCluster.filter((t) => !filtros.cesta || t.cesta === filtros.cesta);
-  const filtradas = porCesta.filter((t) => naFaixa(t, filtros.falta));
+  const filtradas = porCesta.filter((t) => naFaixa(t, filtros.falta) && naFaixaPontos(t, filtros.pontos));
+  const porPontos = filtros.ordem === "pontos";
 
-  // Ordem: setor → PDV com tarefa mais rápida de fechar → tarefas do PDV pela quantidade
+  // Ordem: setor → PDV (mais perto de fechar ou com mais pontos) → tarefas do PDV
+  const peso = (t: Tarefa) => (porPontos ? -t.pontos : pesoFalta(t));
   const melhorDoPdv = new Map<string, number>();
+  const pontosDoPdv = new Map<string, number>();
   for (const t of filtradas) {
     melhorDoPdv.set(t.chave, Math.min(melhorDoPdv.get(t.chave) ?? Infinity, pesoFalta(t)));
+    pontosDoPdv.set(t.chave, (pontosDoPdv.get(t.chave) ?? 0) + t.pontos);
   }
   const ordenadas = [...filtradas].sort(
     (a, b) =>
       a.setor.localeCompare(b.setor, "pt-BR", { numeric: true }) ||
-      melhorDoPdv.get(a.chave)! - melhorDoPdv.get(b.chave)! ||
+      (porPontos
+        ? pontosDoPdv.get(b.chave)! - pontosDoPdv.get(a.chave)!
+        : melhorDoPdv.get(a.chave)! - melhorDoPdv.get(b.chave)!) ||
       a.chave.localeCompare(b.chave) ||
-      pesoFalta(a) - pesoFalta(b) ||
+      peso(a) - peso(b) ||
       a.texto.localeCompare(b.texto, "pt-BR")
   );
   const visiveis = ordenadas.slice(0, LIMITE_LINHAS);
@@ -143,7 +167,8 @@ async function Oportunidades({ searchParams }: { searchParams: SearchParams }) {
   const pdvs = new Set(filtradas.map((t) => t.chave)).size;
   const fechaCom1 = filtradas.filter((t) => t.falta === 1);
   const pdvsCom1 = new Set(fechaCom1.map((t) => t.chave)).size;
-  const unidades = filtradas.reduce((s, t) => s + (t.falta ?? 0), 0);
+  const pontosEmJogo = filtradas.reduce((s, t) => s + t.pontos, 0);
+  const pontosCom1 = fechaCom1.reduce((s, t) => s + t.pontos, 0);
   const datas = opcoes(
     Object.entries(base.rotas)
       .filter(([op]) => porOperacao.some((t) => t.operacao === op))
@@ -162,7 +187,7 @@ async function Oportunidades({ searchParams }: { searchParams: SearchParams }) {
             </div>
             <div>
               <h1 className="text-lg font-bold leading-tight tracking-wide">SCORE 5</h1>
-              <p className="text-xs text-slate-400">Oportunidades do dia · Tarefas BEES em aberto</p>
+              <p className="text-xs text-slate-400">Oportunidades de task · Tarefas BEES em aberto</p>
             </div>
           </div>
           <div className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-300">
@@ -186,7 +211,7 @@ async function Oportunidades({ searchParams }: { searchParams: SearchParams }) {
           </div>
 
           <form method="GET" className="space-y-3">
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-5 xl:grid-cols-9">
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-6">
               <CampoSelect
                 nome="regiao"
                 rotulo="Operação agrupada"
@@ -250,6 +275,27 @@ async function Oportunidades({ searchParams }: { searchParams: SearchParams }) {
                 todos="Todas"
                 itens={Object.entries(FAIXAS_FALTA).map(([valor, texto]) => ({ valor, texto }))}
               />
+              <CampoSelect
+                nome="pontos"
+                rotulo="Pontuação"
+                valor={filtros.pontos}
+                todos="Todas"
+                itens={Object.entries(FAIXAS_PONTOS).map(([valor, texto]) => ({ valor, texto }))}
+              />
+              <label className="block text-sm">
+                <span className="mb-1 block text-xs font-medium text-slate-600">Ordenar por</span>
+                <select
+                  name="ordem"
+                  defaultValue={filtros.ordem || "fechar"}
+                  className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                >
+                  {Object.entries(ORDENS).map(([valor, texto]) => (
+                    <option key={valor} value={valor}>
+                      {texto}
+                    </option>
+                  ))}
+                </select>
+              </label>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <button
@@ -272,6 +318,14 @@ async function Oportunidades({ searchParams }: { searchParams: SearchParams }) {
               >
                 Só as que fecham com 1
               </Link>
+              <Link
+                href={`/tarefas?${new URLSearchParams(
+                  Object.entries({ ...filtros, pontos: "100", ordem: "pontos" }).filter(([, v]) => v)
+                ).toString()}`}
+                className="flex h-10 items-center rounded-lg border border-violet-200 bg-violet-50 px-4 text-sm font-semibold text-violet-700 hover:bg-violet-100"
+              >
+                Maiores pontuações
+              </Link>
               <p className="ml-auto text-xs text-slate-500">
                 Só tarefas em aberto (OPEN) da rota do dia. Filtros em cascata — aplique para atualizar as opções.
               </p>
@@ -289,9 +343,9 @@ async function Oportunidades({ searchParams }: { searchParams: SearchParams }) {
             destaque="rose"
           />
           <Kpi
-            titulo="Quantidade a vender"
-            valor={numero(unidades)}
-            detalhe="Soma do que falta (tarefas com quantidade)"
+            titulo="Pontos em jogo"
+            valor={numero(pontosEmJogo)}
+            detalhe={`${numero(pontosCom1)} pontos nas que fecham com 1`}
             destaque="amber"
           />
           <Kpi
@@ -306,7 +360,7 @@ async function Oportunidades({ searchParams }: { searchParams: SearchParams }) {
           <div className="border-b border-slate-200 px-5 py-4">
             <h2 className="text-sm font-bold uppercase tracking-wide text-slate-900">Tarefas por RN e PDV</h2>
             <p className="mt-0.5 text-xs text-slate-500">
-              Ordenado por RN e pelo PDV mais perto de fechar. “Falta” = QTD solicitada − QTD já comprada.
+              Ordenado por RN e pelo PDV {porPontos ? "com mais pontos em jogo" : "mais perto de fechar"}. “Falta” = QTD solicitada − QTD já comprada.
             </p>
           </div>
 
@@ -325,6 +379,7 @@ async function Oportunidades({ searchParams }: { searchParams: SearchParams }) {
                     <th className="px-4 py-2.5 font-semibold">Cesta</th>
                     <th className="px-4 py-2.5 font-semibold">Texto da tarefa</th>
                     <th className="px-4 py-2.5 text-center font-semibold">Falta vender</th>
+                    <th className="px-4 py-2.5 text-center font-semibold">Pontos</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -360,6 +415,19 @@ async function Oportunidades({ searchParams }: { searchParams: SearchParams }) {
                         </td>
                         <td className="whitespace-nowrap px-4 py-2 text-center align-top">
                           <Falta t={t} />
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-2 text-center align-top">
+                          <span
+                            className={`inline-flex min-w-10 justify-center rounded-md px-2 py-0.5 text-sm font-bold tabular-nums ${
+                              t.pontos >= 100
+                                ? "bg-violet-600 text-white"
+                                : t.pontos >= 50
+                                  ? "bg-violet-100 text-violet-800"
+                                  : "text-slate-500"
+                            }`}
+                          >
+                            {numero(t.pontos)}
+                          </span>
                         </td>
                       </tr>
                     );

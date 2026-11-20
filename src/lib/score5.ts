@@ -130,7 +130,7 @@ export function carregarClientes(): Promise<Cliente[]> {
 }
 
 // ==================================================
-// TAREFAS BEES (aba Oportunidades do dia)
+// TAREFAS BEES (aba Oportunidades de task)
 // ==================================================
 
 export const ARQUIVO_TAREFAS = "tarefas-score5.json";
@@ -145,8 +145,8 @@ type TarefasBrutas = {
   textos: string[];
   nomes?: Record<string, string>; // "unb_pdv" → nome fantasia (dClientes / Pedidos Cora / Promax)
   cidades?: Record<string, string>; // "unb_pdv" → cidade (dClientes)
-  // [operação, unb, pdv, setor, gv, cluster, cesta, texto, qtd solicitada, qtd já comprada]
-  linhas: [number, string, string, string, string, number, number, number, number | null, number | null][];
+  // [operação, unb, pdv, setor, gv, cluster, cesta, texto, qtd solicitada, qtd já comprada, pontuação]
+  linhas: [number, string, string, string, string, number, number, number, number | null, number | null, (number | null)?][];
 };
 
 export type Tarefa = {
@@ -163,6 +163,7 @@ export type Tarefa = {
   solicitada: number | null;
   comprada: number | null;
   falta: number | null; // null = tarefa sem quantidade definida
+  pontos: number; // pontuação BEES Force que a tarefa paga ao ser validada
 };
 
 export type BaseTarefas = {
@@ -187,7 +188,7 @@ export async function carregarTarefas(): Promise<BaseTarefas> {
     rotas: b.rotas,
     cestas: b.cestas,
     nomes: b.nomes ?? {},
-    tarefas: b.linhas.map(([op, unb, pdv, setor, gv, cl, ce, tx, sol, ja]) => ({
+    tarefas: b.linhas.map(([op, unb, pdv, setor, gv, cl, ce, tx, sol, ja, pts]) => ({
       operacao: b.operacoes[op],
       unb,
       pdv,
@@ -201,6 +202,7 @@ export async function carregarTarefas(): Promise<BaseTarefas> {
       solicitada: sol,
       comprada: ja,
       falta: sol === null ? null : Math.max(0, sol - (ja ?? 0)),
+      pontos: pts ?? 0,
     })),
   };
 }
