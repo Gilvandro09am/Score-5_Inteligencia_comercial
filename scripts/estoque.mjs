@@ -10,13 +10,48 @@ import path from "node:path";
 /**
  * Unidades com estoque integrado.
  * "codigo" é o prefixo da CHAVE PDV (ex.: 747530_10936 → 747530).
- * Para integrar uma nova unidade, basta adicionar uma linha aqui
- * e colocar o CSV em dados/entrada.
+ * "sigla" é o nome no arquivo diário ESTOQUE_<SIGLA>_AAAAMMDD.csv
+ * (pasta de rede PASTA_ESTOQUES ou dados/entrada) — usa a data mais recente.
+ * "legado" é o nome antigo da grade em dados/entrada (usado só se não houver o diário).
  */
 export const UNIDADES_ESTOQUE = [
-  { codigo: "747530", nome: "Patos", arquivo: "Grade de Estoque_Patos.csv" },
-  { codigo: "747548", nome: "Sumé", arquivo: "Grade de Estoque_Sumé.csv" },
+  { codigo: "747530", nome: "Patos", sigla: "PATOS", legado: "Grade de Estoque_Patos.csv" },
+  { codigo: "747548", nome: "Sumé", sigla: "SUME", legado: "Grade de Estoque_Sumé.csv" },
+  { codigo: "487570", nome: "Sousa", sigla: "SOUSA" },
+  { codigo: "820288", nome: "Itaporanga", sigla: "ITAPORA" },
+  { codigo: "1036580", nome: "Guarabira", sigla: "GUARABIRA" },
+  { codigo: "1044303", nome: "Brumado", sigla: "BRUMADO", outrosCodigos: ["845337"] },
+  { codigo: "1044591", nome: "Barra da Estiva", sigla: "BARRA_ESTIVA", outrosCodigos: ["843059"] },
+  { codigo: "1045180", nome: "Caculé", sigla: "CACULE" },
 ];
+
+/** Pasta de rede com os estoques diários de todas as revendas. */
+export const PASTA_ESTOQUES = "Z:/VENDAS/Gilvandro APR/Estoques_Revendas";
+
+async function listar(pasta) {
+  try {
+    return (await fs.readdir(pasta)).map((nome) => ({ pasta, nome }));
+  } catch {
+    return [];
+  }
+}
+
+/** Arquivo mais recente de cada unidade: ESTOQUE_<SIGLA>_AAAAMMDD.csv → { caminho, data } */
+async function localizarArquivos(pastaEntrada) {
+  const arquivos = [...(await listar(PASTA_ESTOQUES)), ...(await listar(pastaEntrada))];
+  const achados = new Map();
+  for (const unidade of UNIDADES_ESTOQUE) {
+    const re = new RegExp(`^ESTOQUE_${unidade.sigla}_(\\d{8})\\.csv$`, "i");
+    let melhor = null;
+    for (const a of arquivos) {
+      const m = a.nome.match(re);
+      if (m && (!melhor || m[1] > melhor.data)) melhor = { caminho: path.join(a.pasta, a.nome), data: m[1] };
+    }
+    if (!melhor && unidade.legado) melhor = { caminho: path.join(pastaEntrada, unidade.legado), data: "grade antiga" };
+    if (melhor) achados.set(unidade.codigo, melhor);
+  }
+  return achados;
+}
 
 /**
  * Categoria do portfólio → regra para encontrar o produto na grade.
@@ -116,15 +151,21 @@ function casa(regra, descricao) {
  */
 export async function carregarEstoques(pastaEntrada) {
   const estoques = new Map();
+  const arquivos = await localizarArquivos(pastaEntrada);
 
   for (const unidade of UNIDADES_ESTOQUE) {
-    const caminho = path.join(pastaEntrada, unidade.arquivo);
+    const achado = arquivos.get(unidade.codigo);
+    if (!achado) {
+      console.warn(`Estoque ${unidade.nome}: nenhum ESTOQUE_${unidade.sigla}_AAAAMMDD.csv encontrado — ignorado.`);
+      continue;
+    }
+    const caminho = achado.caminho;
     let grade;
     try {
       grade = await lerGrade(caminho);
     } catch (erro) {
       if (erro.code === "ENOENT") {
-        console.warn(`Estoque ${unidade.nome}: arquivo não encontrado (${unidade.arquivo}) — ignorado.`);
+        console.warn(`Estoque ${unidade.nome}: arquivo não encontrado (${caminho}) — ignorado.`);
         continue;
       }
       throw erro;
@@ -141,9 +182,11 @@ export async function carregarEstoques(pastaEntrada) {
       });
     }
 
-    estoques.set(unidade.codigo, { nome: unidade.nome, porCategoria });
+    const dados = { nome: unidade.nome, porCategoria };
+    // Códigos antigos de UNB que ainda aparecem em alguns PDVs da mesma operação
+    for (const codigo of [unidade.codigo, ...(unidade.outrosCodigos ?? [])]) estoques.set(codigo, dados);
 
-    console.log(`\nEstoque ${unidade.nome} (${unidade.codigo}): ${grade.length} produtos na grade`);
+    console.log(`\nEstoque ${unidade.nome} (${unidade.codigo}): ${grade.length} produtos — ${path.basename(caminho)} (${achado.data})`);
     console.table(
       Object.fromEntries(
         [...porCategoria].map(([cat, e]) => [
