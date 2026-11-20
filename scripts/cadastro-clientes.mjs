@@ -50,7 +50,7 @@ export async function carregarCadastro(raiz) {
     crlfDelay: Infinity,
   });
   let cab = null;
-  let iPdv, iNome, iCidade, iBairro, iUf;
+  let iPdv, iNome, iCidade, iBairro, iUf, iVisita;
   for await (const linha of leitor) {
     const c = linha.split(";");
     if (!cab) {
@@ -60,6 +60,7 @@ export async function carregarCadastro(raiz) {
       iCidade = cab.indexOf("Cidade");
       iBairro = cab.indexOf("Bairro");
       iUf = cab.indexOf("UF");
+      iVisita = cab.indexOf("Dia de Visita do VDE");
       if ([iPdv, iNome, iCidade].includes(-1)) {
         throw new Error("dClientes.csv sem as colunas Cód PDV, Nome Fantasia ou Cidade.");
       }
@@ -73,6 +74,7 @@ export async function carregarCadastro(raiz) {
       cidade: titulo(c[iCidade]?.trim() ?? ""),
       bairro: titulo(c[iBairro]?.trim() ?? ""),
       uf: c[iUf]?.trim() ?? "",
+      visita: iVisita >= 0 ? c[iVisita]?.trim() ?? "" : "", // ex.: "SEG/" ou "SEG/QUI/"
     });
   }
   console.log(`  ${mapa.size} clientes no cadastro`);

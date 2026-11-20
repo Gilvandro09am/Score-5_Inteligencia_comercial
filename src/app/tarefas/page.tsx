@@ -6,6 +6,9 @@ import { CampoSelect } from "@/components/CampoSelect";
 import {
   carregarClientes,
   carregarTarefas,
+  DIAS_SEMANA,
+  diasVisita,
+  NOME_DIA,
   numero,
   opcoes,
   plural,
@@ -22,7 +25,7 @@ export const metadata: Metadata = {
 // FILTROS
 // ==================================================
 
-const CHAVES = ["regiao", "operacao", "gv", "setor", "cidade", "pdv", "cesta", "cluster", "falta", "pontos", "ordem"] as const;
+const CHAVES = ["regiao", "operacao", "gv", "setor", "cidade", "visita", "pdv", "cesta", "cluster", "falta", "pontos", "ordem"] as const;
 type Filtros = Record<(typeof CHAVES)[number], string>;
 
 const FAIXAS_FALTA: Record<string, string> = {
@@ -130,7 +133,18 @@ async function Oportunidades({ searchParams }: { searchParams: SearchParams }) {
   const setores = opcoes(porGv.map((t) => t.setor));
   const porRn = porGv.filter((t) => !filtros.setor || t.setor === filtros.setor);
   const cidades = opcoes(porRn.map((t) => t.cidade));
-  const porSetor = porRn.filter((t) => !filtros.cidade || t.cidade === filtros.cidade);
+  const porCidade = porRn.filter((t) => !filtros.cidade || t.cidade === filtros.cidade);
+
+  // Dia de visita: vazio = rota do dia; dia da semana = PDVs que o RN visita nesse dia
+  const diasComPdv = new Set(porCidade.flatMap((t) => diasVisita(t.visita)));
+  const dias = DIAS_SEMANA.filter((d) => diasComPdv.has(d));
+  const porSetor = porCidade.filter((t) =>
+    filtros.visita === "TODOS"
+      ? true
+      : filtros.visita
+        ? diasVisita(t.visita).includes(filtros.visita)
+        : t.naRota
+  );
 
   const termo = filtros.pdv.toLocaleLowerCase("pt-BR");
   const porPdv = porSetor.filter(
@@ -245,6 +259,16 @@ async function Oportunidades({ searchParams }: { searchParams: SearchParams }) {
                 todos="Todas"
                 itens={cidades.map((c) => ({ valor: c, texto: c }))}
               />
+              <CampoSelect
+                nome="visita"
+                rotulo="Dia de visita do RN"
+                valor={filtros.visita}
+                todos={`Rota do dia${datas.length ? ` (${datas.map((d) => dataCurta(d).slice(0, 5)).join(", ")})` : ""}`}
+                itens={[
+                  ...dias.map((d) => ({ valor: d, texto: NOME_DIA[d] ?? d })),
+                  { valor: "TODOS", texto: "Todos os dias" },
+                ]}
+              />
               <label className="block text-sm">
                 <span className="mb-1 block text-xs font-medium text-slate-600">PDV</span>
                 <input
@@ -327,7 +351,7 @@ async function Oportunidades({ searchParams }: { searchParams: SearchParams }) {
                 Maiores pontuações
               </Link>
               <p className="ml-auto text-xs text-slate-500">
-                Só tarefas em aberto (OPEN) da rota do dia. Filtros em cascata — aplique para atualizar as opções.
+                Só tarefas em aberto (OPEN). Outros dias de visita mostram as tarefas mensais ainda em aberto. Filtros em cascata.
               </p>
             </div>
           </form>
@@ -397,6 +421,10 @@ async function Oportunidades({ searchParams }: { searchParams: SearchParams }) {
                               <p className="text-xs text-slate-500">
                                 {t.pdv} · {t.cidade} · GV {t.gv} · {t.operacao.replace(/^Pau Brasil /, "")}
                               </p>
+                              <p className="text-xs text-slate-400">
+                                Visita {t.visita.replace(/\/$/, "") || "—"}
+                                {!t.naRota && t.ultimaVisita ? ` · última ${dataCurta(t.ultimaVisita).slice(0, 5)}` : ""}
+                              </p>
                             </>
                           )}
                         </td>
@@ -411,7 +439,10 @@ async function Oportunidades({ searchParams }: { searchParams: SearchParams }) {
                         </td>
                         <td className="min-w-[320px] px-4 py-2 align-top text-slate-800">
                           {t.texto}
-                          <p className="text-xs text-slate-400">{t.cluster}</p>
+                          <p className="text-xs text-slate-400">
+                            {t.cluster}
+                            {t.mensal ? " · Mensal" : " · Diária"}
+                          </p>
                         </td>
                         <td className="whitespace-nowrap px-4 py-2 text-center align-top">
                           <Falta t={t} />

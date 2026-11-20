@@ -1,5 +1,7 @@
 // Lê os exports de tarefas do BEES Force (fBeesForce*.xlsx) e gera
-// dados/processados/tarefas-score5.json com as tarefas em aberto (OPEN) da rota do dia.
+// dados/processados/tarefas-score5.json com as tarefas em aberto (OPEN):
+//  - rota do dia (última data de visita da operação): todas as tarefas em aberto;
+//  - demais PDVs: tarefas MENSAIS ainda em aberto da última visita (as diárias já expiraram).
 // Procura os arquivos em dados/entrada e em ../painel-tasks-compra/entrada (vale o mais recente).
 // Nome fantasia dos PDVs: Pedidos Cora (.csv com "Nome fantasia") e faturados Promax (.csv "Empresa;Filial;...").
 // Uso: npm run processar   (roda depois do Score 5)
@@ -177,6 +179,12 @@ function dataISO(v) {
   return new Date(Math.round((n - 25569) * 86400000)).toISOString().slice(0, 10);
 }
 
+const DIAS = ["DOM", "SEG", "TER", "QUA", "QUI", "SEX", "SAB"];
+function diaDaSemana(iso) {
+  if (!iso) return "";
+  return `${DIAS[new Date(`${iso}T12:00:00Z`).getUTCDay()]}/`;
+}
+
 const RE_CERVEJA =
   /CERVEJA|BRAHMA|SKOL|BUDWEISER|\bBUD\b|STELLA|CORONA|SPATEN|ORIGINAL|MICHELOB|BOHEMIA|SERRAMALTE|PATR[IÍ]CIA|ANTARCTICA (PILSEN|SUBZERO|ORIGINAL)|BECK|COLORADO|GOOSE/;
 const RE_NAB = /GUARAN|H2OH|PEPSI|SUKITA|SODA|T[OÔ]NICA|GATORADE|RED ?BULL|[AÁ]GUA|FUSION|\bNAB\b|LIPTON|DOLLY/;
@@ -223,6 +231,7 @@ async function executar() {
   };
 
   const rotas = {};
+  const ultimas = {}; // "unb_pdv" → data da última visita
   const linhas = [];
   const vistos = new Set();
 
@@ -234,18 +243,30 @@ async function executar() {
 
     const validos = registros.filter((r) => r.Pdv && r.Setor && r["Operação"]);
 
-    // Rota do dia = data de visita mais recente de cada operação no export
+    // Rota do dia = data de visita mais recente de cada operação no export;
+    // e a última visita de cada PDV no mês
     const ultimaData = {};
+    const ultimaDoPdv = new Map();
     for (const r of validos) {
       const d = dataISO(r["Data Visita"]);
-      if (d && (!ultimaData[r["Operação"]] || d > ultimaData[r["Operação"]])) ultimaData[r["Operação"]] = d;
+      if (!d) continue;
+      if (!ultimaData[r["Operação"]] || d > ultimaData[r["Operação"]]) ultimaData[r["Operação"]] = d;
+      const k = `${r.Unb}_${r.Pdv}`;
+      if (!ultimaDoPdv.has(k) || d > ultimaDoPdv.get(k)) ultimaDoPdv.set(k, d);
     }
 
     let n = 0;
+    let nRota = 0;
     for (const r of validos) {
       const op = r["Operação"];
       if (r["Effectiveness Result"] !== "OPEN") continue;
-      if (dataISO(r["Data Visita"]) !== ultimaData[op]) continue;
+      const data = dataISO(r["Data Visita"]);
+      const k = `${r.Unb}_${r.Pdv}`;
+      if (data !== ultimaDoPdv.get(k)) continue;
+      const naRota = data === ultimaData[op];
+      const mensal = /MONTHLY/.test(r["Mensal/ Diária"] ?? "");
+      if (!naRota && !mensal) continue; // tarefa diária de visita passada: expirou
+      ultimas[k] = data;
 
       const texto = r["Texto da Tarefa"];
       const chave = `${r.Unb}|${r.Pdv}|${texto}`;
@@ -264,11 +285,16 @@ async function executar() {
         numeroOuNulo(r["QTD Solicitada"]),
         numeroOuNulo(r["QTD Já Comprada"]),
         numeroOuNulo(r["Pontuação"]),
+        naRota ? 1 : 0,
+        mensal ? 1 : 0,
       ]);
       n++;
+      if (naRota) nRota++;
     }
     Object.assign(rotas, ultimaData);
-    console.log(`  ${n} tarefas em aberto na rota (${Object.entries(ultimaData).map(([o, d]) => `${o}: ${d}`).join("; ")})`);
+    console.log(
+      `  ${n} tarefas em aberto (${nRota} na rota do dia: ${Object.entries(ultimaData).map(([o, d]) => `${o}: ${d}`).join("; ")})`
+    );
   }
 
   // Nome e cidade: cadastro dClientes primeiro; nome também dos CSVs de pedidos
@@ -276,6 +302,7 @@ async function executar() {
   const nomeDe = await carregarNomes(todos);
   const nomes = {};
   const cidades = {};
+  const visitas = {}; // "unb_pdv" → dias de visita do RN (ex.: "SEG/QUI/")
   for (const l of linhas) {
     const chave = `${l[1]}_${l[2]}`;
     if (chave in cidades) continue;
@@ -283,11 +310,13 @@ async function executar() {
     const n = c?.nome || nomeDe(chave);
     if (n) nomes[chave] = n;
     cidades[chave] = c?.cidade || "Sem cidade";
+    // Sem dia no cadastro, usa o dia da semana da última visita do BEES
+    visitas[chave] = c?.visita || diaDaSemana(ultimas[chave]);
   }
   const pdvs = new Set(linhas.map((l) => `${l[1]}_${l[2]}`)).size;
   console.log(`Nome fantasia encontrado para ${Object.keys(nomes).length} de ${pdvs} PDVs`);
 
-  const resultado = { geradoEm: new Date().toISOString(), rotas, ...dic, nomes, cidades, linhas };
+  const resultado = { geradoEm: new Date().toISOString(), rotas, ...dic, nomes, cidades, visitas, ultimas, linhas };
   await fs.mkdir(saida, { recursive: true });
   await fs.writeFile(path.join(saida, ARQUIVO_SAIDA), JSON.stringify(resultado));
   console.log(`Tarefas em aberto: ${linhas.length} → dados/processados/${ARQUIVO_SAIDA}`);
