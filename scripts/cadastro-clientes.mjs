@@ -18,6 +18,18 @@ export const FILIAL_UNB = {
   "361/0008": "1045180", // Caculé
 };
 
+// Código UNB → nome da operação (o mesmo do Score 5 e do BEES)
+export const OPERACAO_UNB = {
+  "747530": "Pau Brasil Patos",
+  "747548": "Pau Brasil FL",
+  "487570": "Pau Brasil Sousa",
+  "820288": "Pau Brasil FL / Itaporanga",
+  "1036580": "Pau Brasil Guarabira",
+  "1044303": "Pau Brasil Brumado",
+  "1044591": "Pau Brasil Barra da Estiva",
+  "1045180": "Pau Brasil Caculé",
+};
+
 const LOCAIS = (raiz) => [
   path.join(raiz, "dados", "entrada", "dClientes.csv"),
   "Z:/VENDAS/APR/Power BI/Dimensão/dClientes/dClientes.csv",

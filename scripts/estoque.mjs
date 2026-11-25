@@ -36,19 +36,23 @@ async function listar(pasta) {
   }
 }
 
-/** Arquivo mais recente de cada unidade: ESTOQUE_<SIGLA>_AAAAMMDD.csv → { caminho, data } */
+/**
+ * Arquivos de cada unidade, do mais recente ao mais antigo:
+ * ESTOQUE_<SIGLA>_AAAAMMDD.csv → [{ caminho, data }] (grade antiga por último)
+ */
 async function localizarArquivos(pastaEntrada) {
   const arquivos = [...(await listar(PASTA_ESTOQUES)), ...(await listar(pastaEntrada))];
   const achados = new Map();
   for (const unidade of UNIDADES_ESTOQUE) {
     const re = new RegExp(`^ESTOQUE_${unidade.sigla}_(\\d{8})\\.csv$`, "i");
-    let melhor = null;
+    const candidatos = [];
     for (const a of arquivos) {
       const m = a.nome.match(re);
-      if (m && (!melhor || m[1] > melhor.data)) melhor = { caminho: path.join(a.pasta, a.nome), data: m[1] };
+      if (m) candidatos.push({ caminho: path.join(a.pasta, a.nome), data: m[1] });
     }
-    if (!melhor && unidade.legado) melhor = { caminho: path.join(pastaEntrada, unidade.legado), data: "grade antiga" };
-    if (melhor) achados.set(unidade.codigo, melhor);
+    candidatos.sort((a, b) => b.data.localeCompare(a.data));
+    if (unidade.legado) candidatos.push({ caminho: path.join(pastaEntrada, unidade.legado), data: "grade antiga" });
+    achados.set(unidade.codigo, candidatos);
   }
   return achados;
 }
@@ -154,22 +158,29 @@ export async function carregarEstoques(pastaEntrada) {
   const arquivos = await localizarArquivos(pastaEntrada);
 
   for (const unidade of UNIDADES_ESTOQUE) {
-    const achado = arquivos.get(unidade.codigo);
-    if (!achado) {
-      console.warn(`Estoque ${unidade.nome}: nenhum ESTOQUE_${unidade.sigla}_AAAAMMDD.csv encontrado — ignorado.`);
+    // Usa o arquivo mais recente que tenha produtos (export vazio = falha na geração)
+    let grade = null;
+    let achado = null;
+    for (const candidato of arquivos.get(unidade.codigo) ?? []) {
+      let lida;
+      try {
+        lida = await lerGrade(candidato.caminho);
+      } catch (erro) {
+        if (erro.code === "ENOENT") continue;
+        throw erro;
+      }
+      if (lida.length > 0) {
+        grade = lida;
+        achado = candidato;
+        break;
+      }
+      console.warn(`Estoque ${unidade.nome}: ${path.basename(candidato.caminho)} está vazio — ignorado.`);
+    }
+    if (!grade) {
+      console.warn(`Estoque ${unidade.nome}: nenhum arquivo de estoque com produtos — unidade fica sem estoque integrado.`);
       continue;
     }
     const caminho = achado.caminho;
-    let grade;
-    try {
-      grade = await lerGrade(caminho);
-    } catch (erro) {
-      if (erro.code === "ENOENT") {
-        console.warn(`Estoque ${unidade.nome}: arquivo não encontrado (${caminho}) — ignorado.`);
-        continue;
-      }
-      throw erro;
-    }
 
     const porCategoria = new Map();
     for (const [categoria, regra] of Object.entries(MAPA_CATEGORIAS)) {

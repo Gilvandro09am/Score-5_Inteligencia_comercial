@@ -3,6 +3,7 @@ import Link from "next/link";
 const ABAS = [
   { id: "carteira", texto: "Carteira Score 5", href: "/" },
   { id: "tarefas", texto: "Oportunidades de task", href: "/tarefas" },
+  { id: "compradores", texto: "Compradores", href: "/compradores" },
 ] as const;
 
 export function Abas({ atual }: { atual: (typeof ABAS)[number]["id"] }) {

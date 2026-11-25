@@ -221,6 +221,87 @@ export async function carregarTarefas(): Promise<BaseTarefas> {
 }
 
 // ==================================================
+// COMPRADORES (aba Compradores — faturado 03.02.37)
+// ==================================================
+
+export const ARQUIVO_COMPRADORES = "compradores-score5.json";
+
+// Formato compacto gerado por scripts/ler-compradores.mjs
+type CompradoresBrutos = {
+  geradoEm: string;
+  mes: string; // "AAAA-MM"
+  ultimaEmissao: string; // "AAAA-MM-DD"
+  operacoes: string[];
+  rns: Record<string, [string, string]>; // "op|setor" → [gv, nome do RN]
+  // [op, pdv, nome, cidade, setor do comprador, setor da carteira, situação, notas, valor venda, última compra]
+  clientes: [number, string, string, string, string, string, 0 | 1 | 2, number, number, string][];
+};
+
+export type SituacaoCompra = "venda" | "bonificacao" | "nao";
+
+export type ClienteCompra = {
+  operacao: string;
+  pdv: string;
+  nome: string;
+  cidade: string;
+  setor: string; // RN que faturou (ou o da carteira, se não comprou)
+  gv: string;
+  rn: string; // nome do RN
+  carteira: string; // setor da carteira ativa no dClientes ("" = fora da carteira ativa)
+  situacao: SituacaoCompra; // venda = comprou com venda; bonificacao = só bonificação
+  notas: number;
+  valor: number; // R$ das notas de venda
+  ultimaCompra: string; // "DD/MM"
+};
+
+export type BaseCompradores = {
+  geradoEm: string;
+  mes: string;
+  ultimaEmissao: string;
+  rns: Record<string, { gv: string; nome: string }>; // "operação|setor"
+  clientes: ClienteCompra[];
+};
+
+export async function carregarCompradores(): Promise<BaseCompradores> {
+  let b: CompradoresBrutos;
+  try {
+    b = await carregarJson<CompradoresBrutos>(ARQUIVO_COMPRADORES);
+  } catch (erro) {
+    console.error(erro);
+    return { geradoEm: "", mes: "", ultimaEmissao: "", rns: {}, clientes: [] };
+  }
+  const rns: BaseCompradores["rns"] = {};
+  for (const [k, [gv, nome]] of Object.entries(b.rns)) {
+    const [op, setor] = k.split("|");
+    rns[`${b.operacoes[Number(op)]}|${setor}`] = { gv, nome };
+  }
+  return {
+    geradoEm: b.geradoEm,
+    mes: b.mes,
+    ultimaEmissao: b.ultimaEmissao,
+    rns,
+    clientes: b.clientes.map(([op, pdv, nome, cidade, setor, carteira, sit, notas, valor, ultima]) => {
+      const operacao = b.operacoes[op];
+      const rn = rns[`${operacao}|${setor}`];
+      return {
+        operacao,
+        pdv,
+        nome,
+        cidade,
+        setor,
+        gv: rn?.gv ?? "",
+        rn: rn?.nome ?? "",
+        carteira,
+        situacao: sit === 1 ? "venda" : sit === 2 ? "bonificacao" : "nao",
+        notas,
+        valor,
+        ultimaCompra: ultima,
+      };
+    }),
+  };
+}
+
+// ==================================================
 // FORMATAÇÃO
 // ==================================================
 
