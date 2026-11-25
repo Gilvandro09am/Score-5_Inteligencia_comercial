@@ -233,6 +233,7 @@ type CompradoresBrutos = {
   ultimaEmissao: string; // "AAAA-MM-DD"
   operacoes: string[];
   rns: Record<string, [string, string]>; // "op|setor" → [gv, nome do RN]
+  metas?: Record<string, number>; // "op|setor" → meta de compradores do mês
   // [op, pdv, nome, cidade, setor do comprador, setor da carteira, situação, notas, valor venda, última compra]
   clientes: [number, string, string, string, string, string, 0 | 1 | 2, number, number, string][];
 };
@@ -259,6 +260,7 @@ export type BaseCompradores = {
   mes: string;
   ultimaEmissao: string;
   rns: Record<string, { gv: string; nome: string }>; // "operação|setor"
+  metas: Record<string, number>; // "operação|setor" → meta de compradores
   clientes: ClienteCompra[];
 };
 
@@ -268,18 +270,24 @@ export async function carregarCompradores(): Promise<BaseCompradores> {
     b = await carregarJson<CompradoresBrutos>(ARQUIVO_COMPRADORES);
   } catch (erro) {
     console.error(erro);
-    return { geradoEm: "", mes: "", ultimaEmissao: "", rns: {}, clientes: [] };
+    return { geradoEm: "", mes: "", ultimaEmissao: "", rns: {}, metas: {}, clientes: [] };
   }
   const rns: BaseCompradores["rns"] = {};
   for (const [k, [gv, nome]] of Object.entries(b.rns)) {
     const [op, setor] = k.split("|");
     rns[`${b.operacoes[Number(op)]}|${setor}`] = { gv, nome };
   }
+  const metas: BaseCompradores["metas"] = {};
+  for (const [k, meta] of Object.entries(b.metas ?? {})) {
+    const [op, setor] = k.split("|");
+    metas[`${b.operacoes[Number(op)]}|${setor}`] = meta;
+  }
   return {
     geradoEm: b.geradoEm,
     mes: b.mes,
     ultimaEmissao: b.ultimaEmissao,
     rns,
+    metas,
     clientes: b.clientes.map(([op, pdv, nome, cidade, setor, carteira, sit, notas, valor, ultima]) => {
       const operacao = b.operacoes[op];
       const rn = rns[`${operacao}|${setor}`];

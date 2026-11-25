@@ -60,6 +60,7 @@ type LinhaRn = {
   carteira: number;
   positivados: number;
   valor: number;
+  meta: number | null;
 };
 
 // ==================================================
@@ -123,7 +124,20 @@ async function Compradores({ searchParams }: { searchParams: SearchParams }) {
     let l = porChave.get(k);
     if (!l) {
       const rn = base.rns[k];
-      l = { operacao, setor, gv: rn?.gv ?? "", nome: rn?.nome ?? "", compraram: 0, venda: 0, bonificacao: 0, carteira: 0, positivados: 0, valor: 0 };
+      l = {
+        operacao,
+        setor,
+        gv: rn?.gv ?? "",
+        nome: rn?.nome ?? "",
+        compraram: 0,
+        venda: 0,
+        bonificacao: 0,
+        carteira: 0,
+        positivados: 0,
+        valor: 0,
+        // A meta é do setor inteiro: com filtro de cidade a comparação não vale
+        meta: filtros.cidade ? null : (base.metas[k] ?? null),
+      };
       porChave.set(k, l);
     }
     return l;
@@ -142,6 +156,25 @@ async function Compradores({ searchParams }: { searchParams: SearchParams }) {
       if (comprou(c)) l.positivados++;
     }
   }
+  // RNs com meta no filtro (mesmo sem compradores ainda)
+  if (!filtros.cidade) {
+    for (const k of Object.keys(base.metas)) {
+      const [operacao, setor] = k.split("|");
+      const rn = base.rns[k];
+      if (filtros.regiao && regiaoDaOperacao(operacao) !== filtros.regiao) continue;
+      if (filtros.operacao && operacao !== filtros.operacao) continue;
+      if (filtros.gv && rn?.gv !== filtros.gv) continue;
+      if (filtros.setor && setor !== filtros.setor) continue;
+      linhaDe(operacao, setor);
+    }
+  }
+  const comMeta = [...porChave.values()].filter((l) => l.meta !== null);
+  const metaTotal = comMeta.reduce((s, l) => s + (l.meta ?? 0), 0);
+  const compraramComMeta = comMeta.reduce((s, l) => s + l.compraram, 0);
+  // Falta = soma do que falta em cada RN (quem passou da meta não compensa quem não bateu)
+  const faltaMeta = comMeta.reduce((s, l) => s + Math.max(0, (l.meta ?? 0) - l.compraram), 0);
+  const rnsNaMeta = comMeta.filter((l) => l.compraram >= (l.meta ?? 0)).length;
+
   const linhasRn = [...porChave.values()].sort(
     (a, b) =>
       a.operacao.localeCompare(b.operacao, "pt-BR") ||
@@ -283,7 +316,21 @@ async function Compradores({ searchParams }: { searchParams: SearchParams }) {
         </section>
 
         {/* Indicadores */}
-        <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <section className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+          <Kpi
+            titulo="Falta para a meta"
+            valor={comMeta.length ? numero(faltaMeta) : "—"}
+            detalhe={
+              comMeta.length
+                ? `${numero(compraramComMeta)} de ${numero(metaTotal)} compradores (${percentual(
+                    metaTotal ? (compraramComMeta / metaTotal) * 100 : null
+                  )}) · ${rnsNaMeta} de ${plural(comMeta.length, "RN", "RNs")} na meta`
+                : filtros.cidade
+                  ? "Meta é por setor: tire o filtro de cidade"
+                  : "Sem meta para os filtros"
+            }
+            destaque="amber"
+          />
           <Kpi
             titulo="Clientes que compraram"
             valor={numero(compradores.length)}
@@ -316,8 +363,8 @@ async function Compradores({ searchParams }: { searchParams: SearchParams }) {
               <div className="border-b border-slate-200 px-5 py-4">
                 <h2 className="text-sm font-bold uppercase tracking-wide text-slate-900">Compradores por RN</h2>
                 <p className="mt-0.5 text-xs text-slate-500">
-                  Compraram = clientes com nota faturada pelo RN no mês. Positivação = clientes ativos da carteira do RN
-                  (dClientes) que já compraram.
+                  Compraram = clientes com nota faturada pelo RN no mês. Falta p/ meta = meta de compradores do setor −
+                  compraram. Positivação = clientes ativos da carteira do RN (dClientes) que já compraram.
                 </p>
               </div>
               <div className="max-h-[60vh] overflow-auto">
@@ -327,16 +374,20 @@ async function Compradores({ searchParams }: { searchParams: SearchParams }) {
                       <th className="px-4 py-2.5 font-semibold">Operação</th>
                       <th className="px-4 py-2.5 font-semibold">RN</th>
                       <th className="px-4 py-2.5 text-right font-semibold">Compraram</th>
+                      <th className="px-4 py-2.5 text-right font-semibold">Meta</th>
+                      <th className="px-4 py-2.5 font-semibold">Atingimento</th>
+                      <th className="px-4 py-2.5 text-right font-semibold">Falta p/ meta</th>
                       <th className="px-4 py-2.5 text-right font-semibold">Venda</th>
                       <th className="px-4 py-2.5 text-right font-semibold">Só bonif.</th>
                       <th className="px-4 py-2.5 text-right font-semibold">Carteira</th>
-                      <th className="px-4 py-2.5 font-semibold">Positivação</th>
-                      <th className="px-4 py-2.5 text-right font-semibold">Faltam</th>
+                      <th className="px-4 py-2.5 text-right font-semibold">Positivação</th>
+                      <th className="px-4 py-2.5 text-right font-semibold">Sem compra</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {linhasRn.map((l) => {
                       const pct = l.carteira ? (l.positivados / l.carteira) * 100 : null;
+                      const pctMeta = l.meta ? (l.compraram / l.meta) * 100 : null;
                       return (
                         <tr key={`${l.operacao}|${l.setor}`} className="hover:bg-slate-50">
                           <td className="whitespace-nowrap px-4 py-2 text-slate-600">{nomeOperacao(l.operacao)}</td>
@@ -350,27 +401,48 @@ async function Compradores({ searchParams }: { searchParams: SearchParams }) {
                             {l.gv && <span className="ml-1.5 text-xs text-slate-400">GV {l.gv}</span>}
                           </td>
                           <td className="px-4 py-2 text-right font-bold tabular-nums">{numero(l.compraram)}</td>
-                          <td className="px-4 py-2 text-right tabular-nums text-slate-600">{numero(l.venda)}</td>
-                          <td className="px-4 py-2 text-right tabular-nums text-slate-600">{numero(l.bonificacao)}</td>
                           <td className="px-4 py-2 text-right tabular-nums text-slate-600">
-                            {l.carteira ? numero(l.carteira) : "—"}
+                            {l.meta !== null ? numero(l.meta) : "—"}
                           </td>
-                          <td className="min-w-[160px] px-4 py-2">
-                            {pct === null ? (
+                          <td className="min-w-[150px] px-4 py-2">
+                            {pctMeta === null ? (
                               <span className="text-xs text-slate-400">—</span>
                             ) : (
                               <div className="flex items-center gap-2">
                                 <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100">
                                   <div
                                     className={`h-full rounded-full ${
-                                      pct >= 90 ? "bg-emerald-500" : pct >= 75 ? "bg-amber-400" : "bg-rose-500"
+                                      pctMeta >= 100 ? "bg-emerald-500" : pctMeta >= 90 ? "bg-amber-400" : "bg-rose-500"
                                     }`}
-                                    style={{ width: `${Math.min(100, pct)}%` }}
+                                    style={{ width: `${Math.min(100, pctMeta)}%` }}
                                   />
                                 </div>
-                                <span className="w-12 text-right text-xs font-semibold tabular-nums">{percentual(pct)}</span>
+                                <span className="w-12 text-right text-xs font-semibold tabular-nums">
+                                  {percentual(pctMeta)}
+                                </span>
                               </div>
                             )}
+                          </td>
+                          <td className="px-4 py-2 text-right tabular-nums">
+                            {l.meta === null ? (
+                              "—"
+                            ) : l.compraram >= l.meta ? (
+                              <span className="inline-flex rounded-md bg-emerald-100 px-2 py-0.5 text-xs font-bold text-emerald-800">
+                                Bateu{l.compraram > l.meta ? ` +${numero(l.compraram - l.meta)}` : ""}
+                              </span>
+                            ) : (
+                              <span className="inline-flex min-w-8 justify-center rounded-md bg-amber-100 px-2 py-0.5 text-sm font-bold text-amber-900">
+                                {numero(l.meta - l.compraram)}
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-4 py-2 text-right tabular-nums text-slate-600">{numero(l.venda)}</td>
+                          <td className="px-4 py-2 text-right tabular-nums text-slate-600">{numero(l.bonificacao)}</td>
+                          <td className="px-4 py-2 text-right tabular-nums text-slate-600">
+                            {l.carteira ? numero(l.carteira) : "—"}
+                          </td>
+                          <td className="px-4 py-2 text-right text-xs font-semibold tabular-nums text-slate-600">
+                            {percentual(pct)}
                           </td>
                           <td className="px-4 py-2 text-right tabular-nums">
                             {l.carteira ? (
@@ -492,11 +564,13 @@ function Kpi({
   titulo: string;
   valor: string;
   detalhe: string;
-  destaque?: "rose" | "emerald" | "indigo";
+  destaque?: "rose" | "emerald" | "indigo" | "amber";
 }) {
   const borda =
     destaque === "rose"
       ? "border-l-rose-500"
+      : destaque === "amber"
+        ? "border-l-amber-500"
       : destaque === "emerald"
         ? "border-l-emerald-500"
         : destaque === "indigo"

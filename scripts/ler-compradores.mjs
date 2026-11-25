@@ -13,6 +13,7 @@ import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import { FILIAL_UNB, OPERACAO_UNB } from "./cadastro-clientes.mjs";
+import { lerPlanilha } from "./xlsx.mjs";
 
 const raiz = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const ARQUIVO_SAIDA = "compradores-score5.json";
@@ -33,6 +34,30 @@ const REVENDAS = [
   path.join(raiz, "dados", "entrada", "dRevendas.csv"),
   "Z:/VENDAS/APR/Power BI/Dimensão/dRevendas/dRevendas.csv",
 ];
+
+// Metas de compradores por setor: dados/entrada/Metas Compradores<AAAAMM>.xlsx
+// (colunas Cod Unb, Cod Setor, Meta Compradores). Sem o arquivo do mês, usa o mais recente.
+async function carregarMetas(mes) {
+  const pasta = path.join(raiz, "dados", "entrada");
+  let nomes = [];
+  try {
+    nomes = (await fs.readdir(pasta)).filter((n) => /^Metas Compradores\d{6}\.xlsx$/i.test(n) && !n.startsWith("~$"));
+  } catch {
+    return { arquivo: null, metas: new Map() };
+  }
+  const doMes = nomes.find((n) => n.includes(mes.replace("-", "")));
+  const arquivo = doMes ?? nomes.sort().at(-1);
+  const metas = new Map(); // "unb_setor" → meta
+  if (!arquivo) return { arquivo: null, metas };
+  for (const r of await lerPlanilha(path.join(pasta, arquivo))) {
+    const unb = String(r["Cod Unb"] ?? "").trim();
+    const setor = semZeros(r["Cod Setor"]);
+    const meta = Number(String(r["Meta Compradores"] ?? "").replace(",", "."));
+    if (!unb || !setor || !Number.isFinite(meta)) continue;
+    metas.set(`${unb}_${setor}`, (metas.get(`${unb}_${setor}`) ?? 0) + meta); // soma se o setor vier em mais de um segmento
+  }
+  return { arquivo, metas };
+}
 
 const OPERACOES_QUE_CONTAM = { 1: "venda", 2: "bonificacao" };
 const STATUS_FATURADO = new Set(["A", "E"]);
@@ -234,7 +259,26 @@ async function executar() {
     if (rnsSaida[k] && !rnsSaida[k][0] && cad.gv) rnsSaida[k][0] = cad.gv;
   }
 
-  const resultado = { geradoEm: new Date().toISOString(), mes, ultimaEmissao, operacoes, rns: rnsSaida, clientes };
+  // Metas: "op|setor" → meta de compradores
+  const { arquivo: arqMetas, metas } = await carregarMetas(mes);
+  const metasSaida = {};
+  for (const [k, meta] of metas) {
+    const [unb, setor] = k.split("_");
+    const op = idxOp(unb);
+    if (op < 0) continue;
+    metasSaida[`${op}|${setor}`] = meta;
+    if (!rnsSaida[`${op}|${setor}`]) {
+      const rn = rns.get(k);
+      rnsSaida[`${op}|${setor}`] = [rn?.gv || "", rn?.nome || ""];
+    }
+  }
+  console.log(
+    arqMetas
+      ? `  Metas de compradores: ${arqMetas} (${metas.size} setores, total ${[...metas.values()].reduce((a, b) => a + b, 0)})`
+      : "  Metas de compradores: nenhum Metas Compradores<AAAAMM>.xlsx em dados/entrada"
+  );
+
+  const resultado = { geradoEm: new Date().toISOString(), mes, ultimaEmissao, operacoes, rns: rnsSaida, metas: metasSaida, clientes };
   const destino = path.join(raiz, "dados", "processados", ARQUIVO_SAIDA);
   await fs.mkdir(path.dirname(destino), { recursive: true });
   await fs.writeFile(destino, JSON.stringify(resultado));
