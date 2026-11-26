@@ -2,7 +2,7 @@
 // dados/processados/tarefas-score5.json com as tarefas em aberto (OPEN):
 //  - rota do dia (última data de visita da operação): todas as tarefas em aberto;
 //  - demais PDVs: tarefas MENSAIS ainda em aberto da última visita (as diárias já expiraram).
-// Procura os arquivos em dados/entrada e em ../painel-tasks-compra/entrada (vale o mais recente).
+// Procura os arquivos em dados/entrada, ../painel-tasks-compra/entrada e no Painel Digital da rede (vale o mais recente).
 // Nome fantasia dos PDVs: Pedidos Cora (.csv com "Nome fantasia") e faturados Promax (.csv "Empresa;Filial;...").
 // Uso: npm run processar   (roda depois do Score 5)
 
@@ -18,7 +18,11 @@ const raiz = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const entrada = path.join(raiz, "dados", "entrada");
 const saida = path.join(raiz, "dados", "processados");
 const ARQUIVO_SAIDA = "tarefas-score5.json";
-const PASTAS = [entrada, path.resolve(raiz, "..", "painel-tasks-compra", "entrada")];
+const PASTAS = [
+  entrada,
+  path.resolve(raiz, "..", "painel-tasks-compra", "entrada"),
+  "Z:/VENDAS/APR/Power BI/Fato/Painel Digital",
+];
 
 // Arquivos das pastas de entrada; com o mesmo nome em duas pastas, fica o mais recente
 async function listarArquivos() {
@@ -144,9 +148,10 @@ function cestaDaTarefa(categoria, texto) {
 
 async function executar() {
   const todos = await listarArquivos();
-  const arquivos = todos.filter(
-    (f) => /\.xlsx$/i.test(f.nome) && /bees|tarefa/i.test(f.nome) && !/long ?neck/i.test(f.nome)
-  );
+  // Só os exports fBeesForce<AAAAMM>*.xlsx do mês mais recente (a pasta Painel Digital guarda os meses anteriores)
+  const doBees = todos.filter((f) => /^fBeesForce\d{6}.*\.xlsx$/i.test(f.nome));
+  const mesBees = doBees.map((f) => f.nome.match(/^fBeesForce(\d{6})/i)[1]).sort().at(-1);
+  const arquivos = doBees.filter((f) => f.nome.toLowerCase().startsWith(`fbeesforce${mesBees}`));
   if (!arquivos.length) {
     console.log("Tarefas BEES: nenhum fBeesForce*.xlsx nas pastas de entrada — aba de oportunidades não atualizada.");
     return;
