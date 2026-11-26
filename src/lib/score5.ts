@@ -234,6 +234,13 @@ type CompradoresBrutos = {
   operacoes: string[];
   rns: Record<string, [string, string]>; // "op|setor" → [gv, nome do RN]
   metas?: Record<string, number>; // "op|setor" → meta de compradores do mês
+  bi?: {
+    atualizadoEm: string;
+    mes: string;
+    rn: Record<string, number>; // "op|setor" → compradores no BI
+    // [op, pdv, nome, cidade, motivo, setor no acomp, setor no BI]
+    divergencias: [number, string, string, string, MotivoDivergencia, string, string][];
+  } | null;
   // [op, pdv, nome, cidade, setor do comprador, setor da carteira, situação, notas, valor venda, última compra]
   clientes: [number, string, string, string, string, string, 0 | 1 | 2, number, number, string][];
 };
@@ -255,12 +262,50 @@ export type ClienteCompra = {
   ultimaCompra: string; // "DD/MM"
 };
 
+// Por que o PDV conta diferente no acomp (faturado 03.02.37) e no BI da Ambev
+export type MotivoDivergencia =
+  | "balcao" // comprou no balcão / sem RN: só o acomp conta
+  | "setorForaBi" // comprou por um setor que o BI não tem (ex.: 12 Digital)
+  | "novo" // fora da base do BI: cliente cadastrado no mês
+  | "semVisita" // fora da base do BI: sem dia de visita no cadastro
+  | "foraBase" // fora da base do BI: outros
+  | "setor" // os dois contam, em setores diferentes
+  | "biSim" // BI diz que comprou, acomp não tem nota
+  | "biNao"; // acomp tem nota, BI diz que não comprou
+
+export const MOTIVOS_DIVERGENCIA: Record<MotivoDivergencia, { texto: string; detalhe: string }> = {
+  balcao: { texto: "Balcão / sem RN", detalhe: "Nota sem setor de RN: o acomp conta, o BI não" },
+  setorForaBi: { texto: "Setor fora do BI", detalhe: "Faturado por setor que o BI não tem (ex.: Digital)" },
+  novo: { texto: "Cliente novo", detalhe: "Cadastrado no mês e ainda fora da base do BI" },
+  semVisita: { texto: "Sem dia de visita", detalhe: "Fora da base do BI: cadastro sem dia de visita" },
+  foraBase: { texto: "Fora da base do BI", detalhe: "Comprou, mas o BI não lista o PDV" },
+  setor: { texto: "Setor diferente", detalhe: "BI conta no setor da carteira; acomp, no setor que faturou" },
+  biSim: { texto: "BI sim · acomp não", detalhe: "BI conta compra sem nota no faturado (venda/bonificação)" },
+  biNao: { texto: "Acomp sim · BI não", detalhe: "Tem nota faturada, mas o BI não conta" },
+};
+
+export type Divergencia = {
+  operacao: string;
+  pdv: string;
+  nome: string;
+  cidade: string;
+  motivo: MotivoDivergencia;
+  setorAcomp: string; // "" = não comprou no acomp
+  setorBi: string; // "" = fora da base do BI
+};
+
 export type BaseCompradores = {
   geradoEm: string;
   mes: string;
   ultimaEmissao: string;
   rns: Record<string, { gv: string; nome: string }>; // "operação|setor"
   metas: Record<string, number>; // "operação|setor" → meta de compradores
+  bi: {
+    atualizadoEm: string;
+    mes: string;
+    rn: Record<string, number>; // "operação|setor" → compradores no BI
+    divergencias: Divergencia[];
+  } | null;
   clientes: ClienteCompra[];
 };
 
@@ -270,7 +315,7 @@ export async function carregarCompradores(): Promise<BaseCompradores> {
     b = await carregarJson<CompradoresBrutos>(ARQUIVO_COMPRADORES);
   } catch (erro) {
     console.error(erro);
-    return { geradoEm: "", mes: "", ultimaEmissao: "", rns: {}, metas: {}, clientes: [] };
+    return { geradoEm: "", mes: "", ultimaEmissao: "", rns: {}, metas: {}, bi: null, clientes: [] };
   }
   const rns: BaseCompradores["rns"] = {};
   for (const [k, [gv, nome]] of Object.entries(b.rns)) {
@@ -288,6 +333,27 @@ export async function carregarCompradores(): Promise<BaseCompradores> {
     ultimaEmissao: b.ultimaEmissao,
     rns,
     metas,
+    bi: b.bi
+      ? {
+          atualizadoEm: b.bi.atualizadoEm,
+          mes: b.bi.mes,
+          rn: Object.fromEntries(
+            Object.entries(b.bi.rn).map(([k, n]) => {
+              const [op, setor] = k.split("|");
+              return [`${b.operacoes[Number(op)]}|${setor}`, n];
+            })
+          ),
+          divergencias: b.bi.divergencias.map(([op, pdv, nome, cidade, motivo, setorAcomp, setorBi]) => ({
+            operacao: b.operacoes[op],
+            pdv,
+            nome,
+            cidade,
+            motivo,
+            setorAcomp,
+            setorBi,
+          })),
+        }
+      : null,
     clientes: b.clientes.map(([op, pdv, nome, cidade, setor, carteira, sit, notas, valor, ultima]) => {
       const operacao = b.operacoes[op];
       const rn = rns[`${operacao}|${setor}`];

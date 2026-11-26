@@ -59,6 +59,94 @@ async function carregarMetas(mes) {
   return { arquivo, metas };
 }
 
+// BI oficial da Ambev (Geo NE): compradores.xlsx com um PDV por linha e a coluna "Comp." (Sim/Não)
+const BI_COMPRADORES = [
+  path.join(raiz, "dados", "entrada", "compradores.xlsx"),
+  "Z:/VENDAS/APR/Power BI/Fato/Painel Digital/compradores.xlsx",
+];
+const MESES = { jan: "01", fev: "02", mar: "03", abr: "04", mai: "05", jun: "06", jul: "07", ago: "08", set: "09", out: "10", nov: "11", dez: "12" };
+
+/**
+ * Compara, PDV a PDV, os compradores do acomp (faturado 03.02.37) com o BI da Ambev.
+ * Motivos da divergência:
+ *  balcao      comprou no balcão / sem RN (o BI só conta a carteira dos RNs)
+ *  setorForaBi comprou por um setor que o BI não tem (ex.: 12 Digital)
+ *  novo        fora da base do BI: cliente cadastrado no mês
+ *  semVisita   fora da base do BI: sem dia de visita no cadastro
+ *  foraBase    fora da base do BI: outros
+ *  setor       os dois contam, mas em setores diferentes (BI = carteira; acomp = setor que faturou)
+ *  biSim       BI diz que comprou e o acomp não tem nota
+ *  biNao       acomp tem nota e o BI diz que não comprou
+ */
+async function compararComBi({ mes, compradores, cadastro, clientes, idxOp, setorDoComprador }) {
+  const arquivo = await maisRecente(BI_COMPRADORES);
+  if (!arquivo) {
+    console.log("  BI compradores: compradores.xlsx não encontrado — quadro de divergência não atualizado.");
+    return null;
+  }
+  const linhas = await lerPlanilha(arquivo);
+  // Última linha do export: "Filtros aplicados: ... mes_ano é Nov/26"
+  const filtro = linhas.map((r) => r["Cód. Unb."]).find((v) => /mes_ano/i.test(v ?? "")) ?? "";
+  const m = filtro.match(/mes_ano é (\w{3})\/(\d{2})/i);
+  const mesBi = m ? `20${m[2]}-${MESES[m[1].toLowerCase()] ?? "??"}` : "";
+  if (mesBi && mesBi !== mes) console.warn(`  ATENÇÃO: BI compradores é de ${mesBi}, o faturado é de ${mes}.`);
+
+  const base = new Map(); // "unb_pdv" → { setor, sim }
+  const setoresBi = new Set(); // "op|setor"
+  const rn = {}; // "op|setor" → compradores no BI
+  for (const r of linhas) {
+    const unb = String(r["Cód. Unb."] ?? "").trim();
+    const op = idxOp(unb);
+    if (op < 0) continue;
+    const setor = semZeros(r["Cod Setor"]);
+    const sim = String(r["Comp."]).trim().toLowerCase() === "sim";
+    base.set(`${unb}_${semZeros(r["Cod PDV"])}`, { setor, sim, nome: r["Nome Fantasia"]?.trim() ?? "" });
+    setoresBi.add(`${op}|${setor}`);
+    if (sim) rn[`${op}|${setor}`] = (rn[`${op}|${setor}`] ?? 0) + 1;
+  }
+
+  // [op, pdv, nome, cidade, motivo, setor no acomp, setor no BI]
+  const divergencias = [];
+  const nomeCidade = (chave, nomeAlt) => {
+    const cad = cadastro.get(chave);
+    return [cad?.nome || nomeAlt || "", cad?.cidade || "Sem cidade"];
+  };
+  for (const [chave, r] of compradores) {
+    const op = idxOp(r.unb);
+    if (op < 0) continue;
+    const cad = cadastro.get(chave);
+    const setor = setorDoComprador(r, cad);
+    const b = base.get(chave);
+    let motivo = null;
+    if (!b) {
+      if (setor === "0") motivo = "balcao";
+      else if (!setoresBi.has(`${op}|${setor}`)) motivo = "setorForaBi";
+      else if (cad?.cadastroMes === mes) motivo = "novo";
+      else if (!cad?.visita) motivo = "semVisita";
+      else motivo = "foraBase";
+    } else if (!b.sim) motivo = "biNao";
+    else if (b.setor !== setor) motivo = "setor";
+    if (motivo) divergencias.push([op, r.pdv, ...nomeCidade(chave, r.nome), motivo, setor, b?.setor ?? ""]);
+  }
+  for (const [chave, b] of base) {
+    if (!b.sim || compradores.has(chave)) continue;
+    const [unb, pdv] = chave.split("_");
+    divergencias.push([idxOp(unb), pdv, ...nomeCidade(chave, b.nome), "biSim", "", b.setor]);
+  }
+
+  const totalBi = Object.values(rn).reduce((a, b) => a + b, 0);
+  const totalAcomp = clientes.filter((l) => l[6] > 0).length;
+  const porMotivo = {};
+  for (const d of divergencias) porMotivo[d[4]] = (porMotivo[d[4]] ?? 0) + 1;
+  console.log(
+    `  BI compradores: ${path.basename(arquivo)} (${mesBi || "mês ?"}) — BI ${totalBi} × acomp ${totalAcomp}; divergências`,
+    porMotivo
+  );
+
+  const info = await fs.stat(arquivo);
+  return { atualizadoEm: info.mtime.toISOString(), mes: mesBi, rn, divergencias };
+}
+
 const OPERACOES_QUE_CONTAM = { 1: "venda", 2: "bonificacao" };
 const STATUS_FATURADO = new Set(["A", "E"]);
 
@@ -160,6 +248,8 @@ async function executar() {
         setor: semZeros(g("Setor VDE")),
         gv: semZeros(g("GV VDE")),
         ativo: g("Status do PDV") === "Ativo",
+        cadastroMes: iso(g("Data de Cadastro")).slice(0, 7), // "AAAA-MM"
+        visita: g("Dia de Visita do VDE"),
       });
     });
   }
@@ -278,7 +368,27 @@ async function executar() {
       : "  Metas de compradores: nenhum Metas Compradores<AAAAMM>.xlsx em dados/entrada"
   );
 
-  const resultado = { geradoEm: new Date().toISOString(), mes, ultimaEmissao, operacoes, rns: rnsSaida, metas: metasSaida, clientes };
+  // ---------- Divergência com o BI oficial da Ambev (compradores.xlsx do Painel Digital)
+  const bi = await compararComBi({ mes, compradores, cadastro, clientes, idxOp, setorDoComprador });
+  if (bi) {
+    for (const k of Object.keys(bi.rn)) {
+      if (rnsSaida[k]) continue;
+      const [op, setor] = k.split("|");
+      const rn = rns.get(`${Object.keys(OPERACAO_UNB)[op]}_${setor}`);
+      rnsSaida[k] = [rn?.gv || "", rn?.nome || ""];
+    }
+  }
+
+  const resultado = {
+    geradoEm: new Date().toISOString(),
+    mes,
+    ultimaEmissao,
+    operacoes,
+    rns: rnsSaida,
+    metas: metasSaida,
+    bi,
+    clientes,
+  };
   const destino = path.join(raiz, "dados", "processados", ARQUIVO_SAIDA);
   await fs.mkdir(path.dirname(destino), { recursive: true });
   await fs.writeFile(destino, JSON.stringify(resultado));

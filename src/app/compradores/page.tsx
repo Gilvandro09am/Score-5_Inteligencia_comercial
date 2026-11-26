@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Suspense } from "react";
 import { Abas } from "@/components/Abas";
 import { CampoSelect } from "@/components/CampoSelect";
+import { DivergenciaBi } from "@/components/DivergenciaBi";
 import {
   carregarCompradores,
   type ClienteCompra,
@@ -24,7 +25,7 @@ export const metadata: Metadata = {
 // FILTROS
 // ==================================================
 
-const CHAVES = ["regiao", "operacao", "gv", "setor", "cidade", "situacao", "pdv"] as const;
+const CHAVES = ["regiao", "operacao", "gv", "setor", "cidade", "situacao", "pdv", "motivo"] as const;
 type Filtros = Record<(typeof CHAVES)[number], string>;
 
 const SITUACOES: Record<string, string> = {
@@ -466,6 +467,8 @@ async function Compradores({ searchParams }: { searchParams: SearchParams }) {
                 )}
               </div>
             </section>
+
+            <DivergenciaBi base={base} filtros={filtros} hrefCom={hrefCom} />
 
             {/* Clientes */}
             <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
