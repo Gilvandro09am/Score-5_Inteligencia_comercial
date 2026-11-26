@@ -305,7 +305,7 @@ async function executar() {
     return ordem[0]?.[0] ?? (cad?.setor && setorDeRn(cad.setor) ? cad.setor : "0");
   };
 
-  // [op, pdv, nome, cidade, setor do comprador, setor da carteira (ou ""), situação, notas, valor venda, última compra "DD/MM"]
+  // [op, pdv, nome, cidade, setor do comprador, setor da carteira (ou ""), situação, notas, valor venda, última compra "DD/MM", dias de visita (ex.: "SEG/QUI/")]
   // situação: 0 = não comprou, 1 = venda, 2 = só bonificação
   const clientes = [];
   for (const [chave, r] of compradores) {
@@ -321,13 +321,14 @@ async function executar() {
       r.notas.size,
       Math.round(r.valor * 100) / 100,
       r.ultima.slice(8, 10) + "/" + r.ultima.slice(5, 7),
+      cad?.visita ?? "",
     ]);
   }
   for (const [chave, cad] of cadastro) {
     if (!cad.ativo || !setorDeRn(cad.setor) || compradores.has(chave)) continue;
     const [unb, pdv] = chave.split("_");
     if (idxOp(unb) < 0) continue;
-    clientes.push([idxOp(unb), pdv, cad.nome, cad.cidade || "Sem cidade", cad.setor, cad.setor, 0, 0, 0, ""]);
+    clientes.push([idxOp(unb), pdv, cad.nome, cad.cidade || "Sem cidade", cad.setor, cad.setor, 0, 0, 0, "", cad.visita ?? ""]);
   }
 
   // RN: "op|setor" → [gv, nome]

@@ -12,6 +12,9 @@ import {
   numero,
   opcoes,
   percentual,
+  DIAS_SEMANA,
+  diasVisita,
+  NOME_DIA,
   plural,
   REGIOES,
   regiaoDaOperacao,
@@ -25,7 +28,7 @@ export const metadata: Metadata = {
 // FILTROS
 // ==================================================
 
-const CHAVES = ["regiao", "operacao", "gv", "setor", "cidade", "situacao", "pdv", "motivo"] as const;
+const CHAVES = ["regiao", "operacao", "gv", "setor", "cidade", "visita", "situacao", "pdv", "motivo"] as const;
 type Filtros = Record<(typeof CHAVES)[number], string>;
 
 const SITUACOES: Record<string, string> = {
@@ -109,11 +112,21 @@ async function Compradores({ searchParams }: { searchParams: SearchParams }) {
   const porRn = porGv.filter(doRn);
   const cidades = opcoes(porRn.map((c) => c.cidade));
   const porCidade = porRn.filter((c) => !filtros.cidade || c.cidade === filtros.cidade);
+  // Dia de visita do RN (dClientes): "SEG/QUI/" entra em segunda e em quinta
+  const diasComCliente = new Set(porCidade.flatMap((c) => diasVisita(c.visita)));
+  const dias = DIAS_SEMANA.filter((d) => diasComCliente.has(d));
+  const porVisita = porCidade.filter(
+    (c) =>
+      !filtros.visita ||
+      (filtros.visita === "SEM" ? diasVisita(c.visita).length === 0 : diasVisita(c.visita).includes(filtros.visita))
+  );
+  // Meta é do setor inteiro: com recorte de cidade ou dia de visita a comparação não vale
+  const recorte = Boolean(filtros.cidade || filtros.visita);
 
   // Indicadores (antes do filtro de situação/PDV)
-  const compradores = porCidade.filter((c) => (!filtros.setor || c.setor === filtros.setor) && comprou(c));
+  const compradores = porVisita.filter((c) => (!filtros.setor || c.setor === filtros.setor) && comprou(c));
   const soBonificacao = compradores.filter((c) => c.situacao === "bonificacao").length;
-  const carteira = porCidade.filter((c) => c.carteira && (!filtros.setor || c.carteira === filtros.setor));
+  const carteira = porVisita.filter((c) => c.carteira && (!filtros.setor || c.carteira === filtros.setor));
   const positivados = carteira.filter(comprou).length;
   const faltam = carteira.length - positivados;
   const valor = compradores.reduce((s, c) => s + c.valor, 0);
@@ -136,14 +149,13 @@ async function Compradores({ searchParams }: { searchParams: SearchParams }) {
         carteira: 0,
         positivados: 0,
         valor: 0,
-        // A meta é do setor inteiro: com filtro de cidade a comparação não vale
-        meta: filtros.cidade ? null : (base.metas[k] ?? null),
+        meta: recorte ? null : (base.metas[k] ?? null),
       };
       porChave.set(k, l);
     }
     return l;
   };
-  for (const c of porCidade) {
+  for (const c of porVisita) {
     if (comprou(c) && (!filtros.setor || c.setor === filtros.setor)) {
       const l = linhaDe(c.operacao, c.setor);
       l.compraram++;
@@ -158,7 +170,7 @@ async function Compradores({ searchParams }: { searchParams: SearchParams }) {
     }
   }
   // RNs com meta no filtro (mesmo sem compradores ainda)
-  if (!filtros.cidade) {
+  if (!recorte) {
     for (const k of Object.keys(base.metas)) {
       const [operacao, setor] = k.split("|");
       const rn = base.rns[k];
@@ -185,7 +197,7 @@ async function Compradores({ searchParams }: { searchParams: SearchParams }) {
 
   // Lista de clientes
   const termo = filtros.pdv.toLocaleLowerCase("pt-BR");
-  const lista = porCidade
+  const lista = porVisita
     .filter((c) => naSituacao(c, filtros.situacao))
     .filter((c) => !termo || c.pdv === termo || c.nome.toLocaleLowerCase("pt-BR").includes(termo))
     .sort(
@@ -235,7 +247,7 @@ async function Compradores({ searchParams }: { searchParams: SearchParams }) {
           </div>
 
           <form method="GET" className="space-y-3">
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
               <CampoSelect
                 nome="regiao"
                 rotulo="Operação agrupada"
@@ -271,6 +283,16 @@ async function Compradores({ searchParams }: { searchParams: SearchParams }) {
                 valor={filtros.cidade}
                 todos="Todas"
                 itens={cidades.map((c) => ({ valor: c, texto: c }))}
+              />
+              <CampoSelect
+                nome="visita"
+                rotulo="Dia de visita do RN"
+                valor={filtros.visita}
+                todos="Todos os dias"
+                itens={[
+                  ...dias.map((d) => ({ valor: d, texto: NOME_DIA[d] ?? d })),
+                  { valor: "SEM", texto: "Sem dia de visita" },
+                ]}
               />
               <CampoSelect
                 nome="situacao"
@@ -326,8 +348,8 @@ async function Compradores({ searchParams }: { searchParams: SearchParams }) {
                 ? `${numero(compraramComMeta)} de ${numero(metaTotal)} compradores (${percentual(
                     metaTotal ? (compraramComMeta / metaTotal) * 100 : null
                   )}) · ${rnsNaMeta} de ${plural(comMeta.length, "RN", "RNs")} na meta`
-                : filtros.cidade
-                  ? "Meta é por setor: tire o filtro de cidade"
+                : recorte
+                  ? "Meta é por setor: tire o filtro de cidade/dia de visita"
                   : "Sem meta para os filtros"
             }
             destaque="amber"
@@ -505,6 +527,7 @@ async function Compradores({ searchParams }: { searchParams: SearchParams }) {
                           <p className="font-semibold text-slate-900">{c.nome || `PDV ${c.pdv}`}</p>
                           <p className="text-xs text-slate-500">
                             {c.pdv} · {c.cidade} · {nomeOperacao(c.operacao)}
+                            {c.visita && ` · visita ${c.visita.replace(/\/$/, "")}`}
                             {!c.carteira && " · fora da carteira ativa"}
                           </p>
                         </td>

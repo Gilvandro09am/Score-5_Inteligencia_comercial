@@ -242,7 +242,7 @@ type CompradoresBrutos = {
     divergencias: [number, string, string, string, MotivoDivergencia, string, string][];
   } | null;
   // [op, pdv, nome, cidade, setor do comprador, setor da carteira, situação, notas, valor venda, última compra]
-  clientes: [number, string, string, string, string, string, 0 | 1 | 2, number, number, string][];
+  clientes: [number, string, string, string, string, string, 0 | 1 | 2, number, number, string, string?][];
 };
 
 export type SituacaoCompra = "venda" | "bonificacao" | "nao";
@@ -260,6 +260,7 @@ export type ClienteCompra = {
   notas: number;
   valor: number; // R$ das notas de venda
   ultimaCompra: string; // "DD/MM"
+  visita: string; // dias de visita do RN no dClientes, ex.: "SEG/QUI/"
 };
 
 // Por que o PDV conta diferente no acomp (faturado 03.02.37) e no BI da Ambev
@@ -354,7 +355,7 @@ export async function carregarCompradores(): Promise<BaseCompradores> {
           })),
         }
       : null,
-    clientes: b.clientes.map(([op, pdv, nome, cidade, setor, carteira, sit, notas, valor, ultima]) => {
+    clientes: b.clientes.map(([op, pdv, nome, cidade, setor, carteira, sit, notas, valor, ultima, visita]) => {
       const operacao = b.operacoes[op];
       const rn = rns[`${operacao}|${setor}`];
       return {
@@ -370,6 +371,7 @@ export async function carregarCompradores(): Promise<BaseCompradores> {
         notas,
         valor,
         ultimaCompra: ultima,
+        visita: visita ?? "",
       };
     }),
   };
