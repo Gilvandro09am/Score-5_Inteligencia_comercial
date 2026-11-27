@@ -233,6 +233,13 @@ const CESTAS = {
       produtos: ["AP 600", "BC 600", "BUD 600", "ORI 600", "SK 600", "SPT 600", "STL 600", "STL PG 600", "OUTROS 600"],
     },
     {
+      id: "coreLitrinho",
+      nome: "Core Litrinho",
+      meta: "LITRINHO",
+      bloco: "CORE",
+      produtos: ["AP 300", "BC 300", "BUD 300", "ORI 300", "SK 300", "OUTROS 300"],
+    },
+    {
       id: "coreRGB",
       nome: "Core RGB",
       meta: "RGB",
@@ -300,7 +307,7 @@ function resolverCestas(cabecalhos) {
 // 3. CÁLCULO DO PORTFÓLIO IDEAL
 // ==================================================
 
-function calcularCesta(registro, cabecalhos, config, estoque) {
+function calcularCesta(registro, cabecalhos, config, estoque, bateuMeta) {
   const metaOriginal = numero(
     registro.linha[config.metaColuna - 1]
   );
@@ -341,8 +348,12 @@ function calcularCesta(registro, cabecalhos, config, estoque) {
 
   const meta = possuiMeta ? metaOriginal : null;
 
+  // "BATEU META" = 1 no Portfólio Ideal: o relatório oficial já considera o portfólio
+  // batido — a cesta conta como concluída mesmo que os SKUs ainda não fechem a meta.
+  const confirmada = possuiMeta && bateuMeta && realizado < meta;
+
   const faltam = possuiMeta
-    ? Math.max(0, meta - realizado)
+    ? confirmada ? 0 : Math.max(0, meta - realizado)
     : null;
 
   const atingimento = possuiMeta
@@ -377,6 +388,7 @@ function calcularCesta(registro, cabecalhos, config, estoque) {
     faltam,
     atingimento,
     status,
+    confirmada, // concluída pelo "BATEU META" do relatório
     produtos,
     oportunidades,
     oportunidadesOneWay,
@@ -594,7 +606,8 @@ async function executar() {
         p,
         portfolio.cabecalhos,
         config,
-        estoque
+        estoque,
+        numero(p.obter("BATEU META")) === 1
       )
     );
 

@@ -40,6 +40,7 @@ export type Cesta = {
   faltam: number | null;
   atingimento: number | null;
   status: StatusMeta;
+  confirmada?: boolean; // concluída pelo "BATEU META" = 1 do Portfólio Ideal, mesmo com SKUs abaixo da meta
   produtos: Produto[];
   oportunidades: string[];
   oportunidadesOneWay: string[];

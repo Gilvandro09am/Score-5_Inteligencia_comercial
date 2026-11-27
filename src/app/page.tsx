@@ -280,6 +280,9 @@ function FaixaCesta({ acao }: { acao: AcaoCesta }) {
             <div className="mt-2">
               <Barra valor={cesta.atingimento} status={cesta.status} />
             </div>
+            {cesta.confirmada && (
+              <p className="mt-1 text-[11px] font-medium text-emerald-700">✓ Portfólio ok no relatório (BATEU META)</p>
+            )}
           </>
         )}
       </div>
@@ -944,7 +947,7 @@ async function Painel({ searchParams }: { searchParams: SearchParams }) {
                               key={cesta.id}
                               title={`${cesta.nome}: ${TEXTO_STATUS[cesta.status]}${
                                 cesta.status === "PENDENTE" ? ` (faltam ${cesta.faltam})` : ""
-                              }`}
+                              }${cesta.confirmada ? " — confirmada pelo BATEU META do relatório" : ""}`}
                               className={`h-2.5 w-6 rounded-sm ${
                                 cesta.status === "CONCLUIDA"
                                   ? "bg-emerald-500"
