@@ -4,6 +4,7 @@ const ABAS = [
   { id: "carteira", texto: "Carteira Score 5", href: "/" },
   { id: "tarefas", texto: "Oportunidades de task", href: "/tarefas" },
   { id: "compradores", texto: "Compradores", href: "/compradores" },
+  { id: "faturamento", texto: "Faturamento", href: "/faturamento" },
 ] as const;
 
 export function Abas({ atual }: { atual: (typeof ABAS)[number]["id"] }) {

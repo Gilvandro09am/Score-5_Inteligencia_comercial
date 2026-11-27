@@ -384,6 +384,93 @@ export async function carregarCompradores(): Promise<BaseCompradores> {
 }
 
 // ==================================================
+// FATURAMENTO (aba Faturamento — 03.02.37 × REAL TASK do Score)
+// ==================================================
+
+export const ARQUIVO_FATURAMENTO = "faturamento-score5.json";
+
+type FaturamentoBruto = {
+  geradoEm: string;
+  mes: string;
+  ultimaEmissao: string;
+  corte: string; // "AAAA-MM-DD": até onde o relatório do Score contou as notas
+  cesta: string;
+  // [chave, meta, real Score, task FAT ok, acomp até o corte, acomp total, notas [nota, emissão "DD/MM", status, tipo, valor]]
+  pdvs: [string, number, number, 0 | 1, number, number, [string, string, string, 1 | 2, number][]][];
+};
+
+export type NotaFaturamento = {
+  nota: string;
+  emissao: string; // "DD/MM"
+  status: string; // A = faturada/entregue, E = emitida (em rota)
+  bonificacao: boolean;
+  valor: number;
+};
+
+// bate = acomp até o corte igual ao REAL TASK (±R$ 1)
+export type SituacaoFaturamento = "bate" | "acompMaior" | "scoreMaior";
+
+export type FaturamentoPdv = {
+  chave: string;
+  meta: number;
+  realScore: number; // REAL TASK do relatório
+  taskOk: boolean; // TASK FAT = 1
+  acompCorte: number; // 03.02.37 até o dia de corte do relatório
+  acompTotal: number; // 03.02.37 até a última nota
+  diferenca: number; // acompCorte − realScore
+  situacao: SituacaoFaturamento;
+  faltaAcomp: number; // meta − acompTotal (0 = bateu pelo faturado)
+  notas: NotaFaturamento[];
+};
+
+export type BaseFaturamento = {
+  geradoEm: string;
+  mes: string;
+  ultimaEmissao: string;
+  corte: string;
+  cesta: string;
+  pdvs: FaturamentoPdv[];
+};
+
+export async function carregarFaturamento(): Promise<BaseFaturamento> {
+  let b: FaturamentoBruto;
+  try {
+    b = await carregarJson<FaturamentoBruto>(ARQUIVO_FATURAMENTO);
+  } catch (erro) {
+    console.error(erro);
+    return { geradoEm: "", mes: "", ultimaEmissao: "", corte: "", cesta: "", pdvs: [] };
+  }
+  return {
+    geradoEm: b.geradoEm,
+    mes: b.mes,
+    ultimaEmissao: b.ultimaEmissao,
+    corte: b.corte,
+    cesta: b.cesta,
+    pdvs: b.pdvs.map(([chave, meta, realScore, taskOk, acompCorte, acompTotal, notas]) => {
+      const diferenca = Math.round((acompCorte - realScore) * 100) / 100;
+      return {
+        chave,
+        meta,
+        realScore,
+        taskOk: taskOk === 1,
+        acompCorte,
+        acompTotal,
+        diferenca,
+        situacao: Math.abs(diferenca) <= 1 ? "bate" : diferenca > 0 ? "acompMaior" : "scoreMaior",
+        faltaAcomp: Math.max(0, meta - acompTotal),
+        notas: notas.map(([nota, emissao, status, tipo, valor]) => ({
+          nota,
+          emissao,
+          status,
+          bonificacao: tipo === 2,
+          valor,
+        })),
+      };
+    }),
+  };
+}
+
+// ==================================================
 // FORMATAÇÃO
 // ==================================================
 

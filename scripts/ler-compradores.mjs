@@ -276,6 +276,8 @@ async function executar() {
       emissao,
       nota: c[7]?.trim(),
       total: numeroBR(c[cab.indexOf("Total")]),
+      produto: semZeros(c[15]),
+      status: c[9]?.trim(),
     });
   });
 
@@ -402,6 +404,119 @@ async function executar() {
     `  Mês ${mes} (até ${ultimaEmissao}): ${comprou.length} clientes compraram ` +
       `(${comprou.filter((l) => l[6] === 2).length} só bonificação); ` +
       `carteira ativa ${carteira.length}, positivada ${carteira.filter((l) => l[6] > 0).length}`
+  );
+  console.log(destino);
+
+  await gerarFaturamento({ mes, ultimaEmissao, notas });
+}
+
+// ==================================================
+// ACOMP DE FATURAMENTO (aba Faturamento)
+// Faturamento de cerveja por PDV pelo 03.02.37 × REAL TASK do Score 5.
+// Regra (validada contra o relatório: bate em ~92% dos PDVs ao centavo):
+//  - produtos da cesta "Cerveja TT" (dProdutos / Cesta de Produtos.xlsx);
+//  - operação 1 (venda) e 2 (bonificação), status A e E, coluna Total;
+//  - emissão no mês; o relatório vai até um dia de corte (normalmente D-1), que é descoberto
+//    testando as últimas datas e ficando com a que mais bate com o REAL TASK.
+// ==================================================
+
+const ARQUIVO_FATURAMENTO = "faturamento-score5.json";
+const CESTA_PRODUTOS = [
+  path.join(raiz, "dados", "entrada", "Cesta de Produtos.xlsx"),
+  "Z:/VENDAS/APR/Power BI/Dimensão/dProdutos/Cesta de Produtos.xlsx",
+];
+const CESTA_CERVEJA = "Cerveja TT";
+
+async function gerarFaturamento({ mes, ultimaEmissao, notas }) {
+  const arqCesta = await maisRecente(CESTA_PRODUTOS);
+  if (!arqCesta) {
+    console.log("  Faturamento: Cesta de Produtos.xlsx não encontrada — aba Faturamento não atualizada.");
+    return;
+  }
+  const cerveja = new Set(
+    (await lerPlanilha(arqCesta))
+      .filter((r) => String(r["Nome Cesta"] ?? "").trim() === CESTA_CERVEJA)
+      .map((r) => semZeros(r["Código Abreviado Produto"]))
+  );
+
+  // PDVs do Score 5 (meta e real do relatório) — gerado antes por ler-planilhas.mjs
+  let clientes;
+  try {
+    clientes = JSON.parse(await fs.readFile(path.join(raiz, "dados", "processados", "clientes-score5.json"), "utf8"));
+  } catch {
+    console.log("  Faturamento: clientes-score5.json não encontrado — rode o processamento do Score antes.");
+    return;
+  }
+  const score = new Map(
+    clientes.map((c) => [
+      c.pdv,
+      {
+        meta: c.faturamento.meta,
+        real: c.faturamento.realizadoRelatorio ?? c.faturamento.realizado,
+        taskOk: Boolean(c.faturamento.taskFatOk),
+      },
+    ])
+  );
+
+  // Itens de cerveja do mês dos PDVs do Score, agrupados por nota
+  const porPdv = new Map(); // chave → Map(nota → { emissao, status, op, valor })
+  for (const n of notas) {
+    if (n.emissao.slice(0, 7) !== mes || !cerveja.has(n.produto)) continue;
+    const chave = `${n.unb}_${n.pdv}`;
+    if (!score.has(chave)) continue;
+    let doPdv = porPdv.get(chave);
+    if (!doPdv) porPdv.set(chave, (doPdv = new Map()));
+    const k = `${n.nota}|${n.tipo}`;
+    const nota = doPdv.get(k) ?? { nota: n.nota, emissao: n.emissao, status: n.status, tipo: n.tipo, valor: 0 };
+    nota.valor += n.total;
+    if (n.status === "E") nota.status = "E";
+    doPdv.set(k, nota);
+  }
+  const somaAte = (chave, data) =>
+    [...(porPdv.get(chave)?.values() ?? [])].filter((n) => !data || n.emissao <= data).reduce((s, n) => s + n.valor, 0);
+
+  // Dia de corte do relatório: a data (entre as últimas emissões) em que mais PDVs batem com o REAL TASK
+  const datas = [...new Set(notas.filter((n) => n.emissao.slice(0, 7) === mes).map((n) => n.emissao))].sort().slice(-6);
+  let corte = ultimaEmissao;
+  let melhor = -1;
+  for (const data of datas) {
+    let batem = 0;
+    for (const [chave, s] of score) if (s.meta && Math.abs(somaAte(chave, data) - s.real) <= 1) batem++;
+    if (batem >= melhor) {
+      melhor = batem;
+      corte = data;
+    }
+  }
+
+  // [chave, meta, real Score, task FAT ok, acomp até o corte, acomp total, notas[[nota, emissão "DD/MM", status, tipo, valor]]]
+  const pdvs = [];
+  for (const [chave, s] of score) {
+    if (!s.meta) continue;
+    const doPdv = [...(porPdv.get(chave)?.values() ?? [])].sort((a, b) => a.emissao.localeCompare(b.emissao));
+    pdvs.push([
+      chave,
+      s.meta,
+      Math.round(s.real * 100) / 100,
+      s.taskOk ? 1 : 0,
+      Math.round(somaAte(chave, corte) * 100) / 100,
+      Math.round(somaAte(chave) * 100) / 100,
+      doPdv.map((n) => [
+        n.nota,
+        `${n.emissao.slice(8, 10)}/${n.emissao.slice(5, 7)}`,
+        n.status,
+        n.tipo === "venda" ? 1 : 2,
+        Math.round(n.valor * 100) / 100,
+      ]),
+    ]);
+  }
+
+  const resultado = { geradoEm: new Date().toISOString(), mes, ultimaEmissao, corte, cesta: CESTA_CERVEJA, pdvs };
+  const destino = path.join(raiz, "dados", "processados", ARQUIVO_FATURAMENTO);
+  await fs.writeFile(destino, JSON.stringify(resultado));
+  const batem = pdvs.filter((p) => Math.abs(p[4] - p[2]) <= 1).length;
+  console.log(
+    `  Faturamento cerveja (${cerveja.size} produtos ${CESTA_CERVEJA}): corte do relatório em ${corte}; ` +
+      `${batem} de ${pdvs.length} PDVs com meta batem com o REAL TASK`
   );
   console.log(destino);
 }

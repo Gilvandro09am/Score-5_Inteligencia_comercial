@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const BUCKET = "score5";
-const ARQUIVOS = ["clientes-score5.json", "tarefas-score5.json", "compradores-score5.json"];
+const ARQUIVOS = ["clientes-score5.json", "tarefas-score5.json", "compradores-score5.json", "faturamento-score5.json"];
 
 const raiz = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
