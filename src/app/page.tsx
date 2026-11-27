@@ -497,6 +497,12 @@ function PainelPdv({ cliente, urlFechar }: { cliente: Cliente; urlFechar: string
           </div>
         ))}
       </div>
+      {fat.realizadoRelatorio != null && (
+        <p className="border-b border-emerald-200 bg-emerald-50 px-5 py-2 text-xs text-emerald-800">
+          ✓ Task de faturamento validada (TASK FAT = 1): meta confirmada. O relatório ainda mostra real de{" "}
+          {dinheiro(fat.realizadoRelatorio)}.
+        </p>
+      )}
 
       {/* Roteiro de ação */}
       <div className="border-b border-slate-200 px-5 py-4">
@@ -923,6 +929,11 @@ async function Painel({ searchParams }: { searchParams: SearchParams }) {
                             <p className="mt-0.5 text-[11px] tabular-nums text-slate-500">
                               Real {dinheiro(c.faturamento.realizado)} / Meta {dinheiro(c.faturamento.meta)}
                             </p>
+                            {c.faturamento.realizadoRelatorio != null && (
+                              <p className="text-[11px] font-medium text-emerald-700">
+                                ✓ Task FAT ok (relatório: {dinheiro(c.faturamento.realizadoRelatorio)})
+                              </p>
+                            )}
                           </div>
                         )}
                       </td>

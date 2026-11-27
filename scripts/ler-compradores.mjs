@@ -93,6 +93,7 @@ async function compararComBi({ mes, compradores, cadastro, clientes, idxOp, seto
 
   const base = new Map(); // "unb_pdv" → { setor, sim }
   const setoresBi = new Set(); // "op|setor"
+  const cobertas = new Set(); // operações que vieram no export (o BI pode ser exportado só de algumas)
   const rn = {}; // "op|setor" → compradores no BI
   for (const r of linhas) {
     const unb = String(r["Cód. Unb."] ?? "").trim();
@@ -102,6 +103,7 @@ async function compararComBi({ mes, compradores, cadastro, clientes, idxOp, seto
     const sim = String(r["Comp."]).trim().toLowerCase() === "sim";
     base.set(`${unb}_${semZeros(r["Cod PDV"])}`, { setor, sim, nome: r["Nome Fantasia"]?.trim() ?? "" });
     setoresBi.add(`${op}|${setor}`);
+    cobertas.add(op);
     if (sim) rn[`${op}|${setor}`] = (rn[`${op}|${setor}`] ?? 0) + 1;
   }
 
@@ -113,7 +115,7 @@ async function compararComBi({ mes, compradores, cadastro, clientes, idxOp, seto
   };
   for (const [chave, r] of compradores) {
     const op = idxOp(r.unb);
-    if (op < 0) continue;
+    if (op < 0 || !cobertas.has(op)) continue;
     const cad = cadastro.get(chave);
     const setor = setorDoComprador(r, cad);
     const b = base.get(chave);
@@ -135,16 +137,16 @@ async function compararComBi({ mes, compradores, cadastro, clientes, idxOp, seto
   }
 
   const totalBi = Object.values(rn).reduce((a, b) => a + b, 0);
-  const totalAcomp = clientes.filter((l) => l[6] > 0).length;
+  const totalAcomp = clientes.filter((l) => l[6] > 0 && cobertas.has(l[0])).length;
   const porMotivo = {};
   for (const d of divergencias) porMotivo[d[4]] = (porMotivo[d[4]] ?? 0) + 1;
   console.log(
-    `  BI compradores: ${path.basename(arquivo)} (${mesBi || "mês ?"}) — BI ${totalBi} × acomp ${totalAcomp}; divergências`,
+    `  BI compradores: ${path.basename(arquivo)} (${mesBi || "mês ?"}; ${cobertas.size} de 8 operações) — BI ${totalBi} × acomp ${totalAcomp}; divergências`,
     porMotivo
   );
 
   const info = await fs.stat(arquivo);
-  return { atualizadoEm: info.mtime.toISOString(), mes: mesBi, rn, divergencias };
+  return { atualizadoEm: info.mtime.toISOString(), mes: mesBi, operacoes: [...cobertas].sort(), rn, divergencias };
 }
 
 const OPERACOES_QUE_CONTAM = { 1: "venda", 2: "bonificacao" };

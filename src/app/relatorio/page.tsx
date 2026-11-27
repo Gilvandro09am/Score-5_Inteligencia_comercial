@@ -378,7 +378,9 @@ async function ConteudoRelatorio({ searchParams }: { searchParams: SearchParams 
                               ✓ Gap {dinheiroSinal(gapFaturamento(fat))}
                             </p>
                             <p className="text-[8.5px] text-slate-500">
-                              Real {dinheiro(fat.realizado)} · Meta {dinheiro(fat.meta)}
+                              {fat.realizadoRelatorio != null
+                                ? `Task FAT ok · Meta ${dinheiro(fat.meta)}`
+                                : `Real ${dinheiro(fat.realizado)} · Meta ${dinheiro(fat.meta)}`}
                             </p>
                           </>
                         ) : (

@@ -75,7 +75,14 @@ export function DivergenciaBi({
 
   const gvDe = (operacao: string, setor: string) => base.rns[`${operacao}|${setor}`]?.gv ?? "";
   // Escopo por operação/GV/RN (a cidade não existe no total por RN do BI: só filtra a lista de PDVs)
+  // O export do BI pode vir só com algumas operações: as outras ficam fora da comparação
+  const cobertas = new Set(bi.operacoes);
+  const todasOperacoes = [...new Set(base.clientes.map((c) => c.operacao))];
+  const naoCobertas = todasOperacoes
+    .filter((o) => !cobertas.has(o))
+    .filter((o) => (!filtros.regiao || regiaoDaOperacao(o) === filtros.regiao) && (!filtros.operacao || o === filtros.operacao));
   const noEscopo = (operacao: string, setor: string) =>
+    cobertas.has(operacao) &&
     (!filtros.regiao || regiaoDaOperacao(operacao) === filtros.regiao) &&
     (!filtros.operacao || operacao === filtros.operacao) &&
     (!filtros.gv || gvDe(operacao, setor) === filtros.gv) &&
@@ -163,6 +170,14 @@ export function DivergenciaBi({
           {bi.mes && bi.mes !== base.mes && <span className="ml-1 font-bold text-rose-700">· mês diferente ({bi.mes})</span>}
         </span>
       </div>
+
+      {naoCobertas.length > 0 && (
+        <p className="border-b border-amber-200 bg-amber-50 px-5 py-2.5 text-xs text-amber-900">
+          O compradores.xlsx do BI veio só com{" "}
+          <strong>{bi.operacoes.map(nomeOperacao).join(", ") || "nenhuma operação"}</strong>. Fora da comparação:{" "}
+          {naoCobertas.map(nomeOperacao).join(", ")} — exporte o BI com todas as operações para comparar.
+        </p>
+      )}
 
       {/* Resumo */}
       <div className="grid grid-cols-2 gap-3 border-b border-slate-200 bg-slate-50/60 p-4 md:grid-cols-4">

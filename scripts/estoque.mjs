@@ -10,7 +10,7 @@ import path from "node:path";
 /**
  * Unidades com estoque integrado.
  * "codigo" é o prefixo da CHAVE PDV (ex.: 747530_10936 → 747530).
- * "sigla" é o nome no arquivo diário ESTOQUE_<SIGLA>_AAAAMMDD.csv
+ * "sigla" é o nome no arquivo diário ESTOQUE_<SIGLA>_AAAAMMDD.csv ou ESTOQUE_<SIGLA>.csv
  * (pasta de rede PASTA_ESTOQUES ou dados/entrada) — usa a data mais recente.
  * "legado" é o nome antigo da grade em dados/entrada (usado só se não houver o diário).
  */
@@ -36,21 +36,28 @@ async function listar(pasta) {
   }
 }
 
+// Data de modificação do arquivo em "AAAAMMDD" (horário de Brasília)
+const dataDoArquivo = (mtime) =>
+  new Date(mtime - 3 * 3600_000).toISOString().slice(0, 10).replace(/-/g, "");
+
 /**
- * Arquivos de cada unidade, do mais recente ao mais antigo:
- * ESTOQUE_<SIGLA>_AAAAMMDD.csv → [{ caminho, data }] (grade antiga por último)
+ * Arquivos de cada unidade, do mais recente ao mais antigo (grade antiga por último):
+ * ESTOQUE_<SIGLA>_AAAAMMDD.csv (data no nome) ou ESTOQUE_<SIGLA>.csv (data de modificação do arquivo).
  */
 async function localizarArquivos(pastaEntrada) {
   const arquivos = [...(await listar(PASTA_ESTOQUES)), ...(await listar(pastaEntrada))];
   const achados = new Map();
   for (const unidade of UNIDADES_ESTOQUE) {
-    const re = new RegExp(`^ESTOQUE_${unidade.sigla}_(\\d{8})\\.csv$`, "i");
+    const re = new RegExp(`^ESTOQUE_${unidade.sigla}(?:_(\\d{8}))?\\.csv$`, "i");
     const candidatos = [];
     for (const a of arquivos) {
       const m = a.nome.match(re);
-      if (m) candidatos.push({ caminho: path.join(a.pasta, a.nome), data: m[1] });
+      if (!m) continue;
+      const caminho = path.join(a.pasta, a.nome);
+      const { mtimeMs } = await fs.stat(caminho);
+      candidatos.push({ caminho, data: m[1] ?? dataDoArquivo(mtimeMs), mtime: mtimeMs });
     }
-    candidatos.sort((a, b) => b.data.localeCompare(a.data));
+    candidatos.sort((a, b) => b.data.localeCompare(a.data) || b.mtime - a.mtime);
     if (unidade.legado) candidatos.push({ caminho: path.join(pastaEntrada, unidade.legado), data: "grade antiga" });
     achados.set(unidade.codigo, candidatos);
   }

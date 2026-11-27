@@ -68,6 +68,8 @@ export type Cliente = {
     faltam: number | null;
     atingimento: number | null;
     possuiTask?: string;
+    taskFatOk?: boolean; // "TASK FAT" = 1 no Score: task de faturamento validada no BEES
+    realizadoRelatorio?: number | null; // REAL TASK do relatório quando a task confirmou a meta
     status: StatusMeta;
   };
   cestas: Cesta[];
@@ -237,6 +239,7 @@ type CompradoresBrutos = {
   bi?: {
     atualizadoEm: string;
     mes: string;
+    operacoes?: number[]; // operações que vieram no export do BI
     rn: Record<string, number>; // "op|setor" → compradores no BI
     // [op, pdv, nome, cidade, motivo, setor no acomp, setor no BI]
     divergencias: [number, string, string, string, MotivoDivergencia, string, string][];
@@ -304,6 +307,7 @@ export type BaseCompradores = {
   bi: {
     atualizadoEm: string;
     mes: string;
+    operacoes: string[]; // operações que vieram no export do BI (as demais não são comparadas)
     rn: Record<string, number>; // "operação|setor" → compradores no BI
     divergencias: Divergencia[];
   } | null;
@@ -338,6 +342,7 @@ export async function carregarCompradores(): Promise<BaseCompradores> {
       ? {
           atualizadoEm: b.bi.atualizadoEm,
           mes: b.bi.mes,
+          operacoes: b.bi.operacoes ? b.bi.operacoes.map((i) => b.operacoes[i]) : b.operacoes,
           rn: Object.fromEntries(
             Object.entries(b.bi.rn).map(([k, n]) => {
               const [op, setor] = k.split("|");

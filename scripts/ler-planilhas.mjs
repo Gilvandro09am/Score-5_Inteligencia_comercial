@@ -220,7 +220,7 @@ const CESTAS = {
       nome: "High End LN Zero",
       meta: "LN ZERO",
       bloco: "HIGH_END",
-      produtos: ["COR LN ZERO", "OUTROS LN ZERO"],
+      produtos: ["COR LN ZERO", "BUD LN ZERO", "OUTROS LN ZERO"],
     },
   ],
 
@@ -400,11 +400,17 @@ function calcularFaturamento(registro) {
     registro.obter("POSSUI TASK")
   );
 
+  // "TASK FAT" = 1: a task de faturamento já foi validada no BEES.
+  // Vale como meta batida, mesmo que o REAL TASK do relatório ainda esteja abaixo.
+  const taskFatOk = numero(registro.obter("TASK FAT")) === 1;
+
   const possuiMeta = metaOriginal !== null &&
     metaOriginal > 0;
 
   const meta = possuiMeta ? metaOriginal : null;
-  const realizado = realizadoOriginal ?? 0;
+  const realizadoRelatorio = realizadoOriginal ?? 0;
+  const confirmadoPelaTask = possuiMeta && taskFatOk && realizadoRelatorio < meta;
+  const realizado = confirmadoPelaTask ? meta : realizadoRelatorio;
 
   const faltam = possuiMeta
     ? Math.max(0, meta - realizado)
@@ -426,6 +432,9 @@ function calcularFaturamento(registro) {
     faltam,
     atingimento,
     possuiTask,
+    taskFatOk,
+    // Real do relatório quando a task confirmou a meta (para mostrar a diferença)
+    realizadoRelatorio: confirmadoPelaTask ? realizadoRelatorio : null,
     status,
   };
 }
